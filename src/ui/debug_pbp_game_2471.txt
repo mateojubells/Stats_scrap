@@ -1,0 +1,135 @@
+================================================================================
+DEBUG PLAY-BY-PLAY MATCHING - Game ID: 2471
+Home Team: CB VALLS TALLERS PABLO MARTÍNEZ (ID: 64)
+Away Team: UE SANT CUGAT - OCCIDENT (ID: 65)
+================================================================================
+
+PLAYER MAP FROM BOX SCORE:
+--------------------------------------------------------------------------------
+  'A. AMABILINO PEREZ'
+    -> Normalizado: 'A AMABILINO PEREZ'
+    -> Player ID: 223
+
+  'A. GARCIA MARTINEZ'
+    -> Normalizado: 'A GARCIA MARTINEZ'
+    -> Player ID: 216
+
+  'A. IGLESIAS GARCIA'
+    -> Normalizado: 'A IGLESIAS GARCIA'
+    -> Player ID: 213
+
+  'A. NEALE GIMENEZ-CASSINA'
+    -> Normalizado: 'A NEALE GIMENEZ-CASSINA'
+    -> Player ID: 231
+
+  'A. PILAN PERET'
+    -> Normalizado: 'A PILAN PERET'
+    -> Player ID: 234
+
+  'A. ROSA BEJARANO'
+    -> Normalizado: 'A ROSA BEJARANO'
+    -> Player ID: 219
+
+  'A. TROUVE CASELLAS'
+    -> Normalizado: 'A TROUVE CASELLAS'
+    -> Player ID: 221
+
+  'C. BONAZEBI LOUSSAKOU'
+    -> Normalizado: 'C BONAZEBI LOUSSAKOU'
+    -> Player ID: 233
+
+  'D. GUILLEN VIVES'
+    -> Normalizado: 'D GUILLEN VIVES'
+    -> Player ID: 225
+
+  'E. GANDOL COBO'
+    -> Normalizado: 'E GANDOL COBO'
+    -> Player ID: 229
+
+  'G. FABREGAS CANALS'
+    -> Normalizado: 'G FABREGAS CANALS'
+    -> Player ID: 214
+
+  'G. GUTIÉRREZ MONREAL'
+    -> Normalizado: 'G GUTIERREZ MONREAL'
+    -> Player ID: 218
+
+  'J. CAÑELLAS VAQUÉ'
+    -> Normalizado: 'J CANELLAS VAQUE'
+    -> Player ID: 222
+
+  'J. HAGENAERS COS'
+    -> Normalizado: 'J HAGENAERS COS'
+    -> Player ID: 228
+
+  'M. GONZALEZ DE UBIETA BELLO'
+    -> Normalizado: 'M GONZALEZ DE UBIETA BELLO'
+    -> Player ID: 224
+
+  'O. BESORA TOMAS'
+    -> Normalizado: 'O BESORA TOMAS'
+    -> Player ID: 220
+
+  'O. NGOMO MIFUMU'
+    -> Normalizado: 'O NGOMO MIFUMU'
+    -> Player ID: 212
+
+  'P. FEIXA MORANCHO'
+    -> Normalizado: 'P FEIXA MORANCHO'
+    -> Player ID: 232
+
+  'P. MAJORAL DE LOS RIOS'
+    -> Normalizado: 'P MAJORAL DE LOS RIOS'
+    -> Player ID: 217
+
+  'R. NEILA CANTERA'
+    -> Normalizado: 'R NEILA CANTERA'
+    -> Player ID: 215
+
+  'R. SOLIVELLES MENDEZ'
+    -> Normalizado: 'R SOLIVELLES MENDEZ'
+    -> Player ID: 226
+
+  'S. CASAÚ PUEYO'
+    -> Normalizado: 'S CASAU PUEYO'
+    -> Player ID: 230
+
+  'W. MCDONALD'
+    -> Normalizado: 'W MCDONALD'
+    -> Player ID: 227
+
+
+================================================================================
+PROCESSING PLAY-BY-PLAY EVENTS:
+================================================================================
+
+Event #58 - ❌ NO MATCH FOUND
+  Quarter 4 @ 03:56
+  Action: foul
+  Text: (CB VALLS TALLERS PABLO MARTÍNEZ) Entrenador: FALTA Técnica. Tiros libres: 1
+  Player name (raw): 'Entrenador'
+  Player name (normalized): 'ENTRENADOR'
+  Team: UE SANT CUGAT - OCCIDENT (ID: 65)
+  Reason: Player name not found in box score player_map
+
+Event #376 - ❌ NO MATCH FOUND
+  Quarter 2 @ 07:57
+  Action: turnover
+  Text: (CB VALLS TALLERS PABLO MARTÍNEZ)  Equipo: PÉRDIDA (Pérdidas: 1)
+  Player name (raw): 'Equipo'
+  Player name (normalized): 'EQUIPO'
+  Team: UE SANT CUGAT - OCCIDENT (ID: 65)
+  Reason: Player name not found in box score player_map
+
+
+================================================================================
+SUMMARY:
+================================================================================
+Total events: 539
+Events with player_id: 520
+Events without player_id: 19
+Unique unmatched players: 2
+
+UNMATCHED PLAYERS:
+  - 'Entrenador' (norm: 'ENTRENADOR') in action: foul
+  - 'Equipo' (norm: 'EQUIPO') in action: turnover

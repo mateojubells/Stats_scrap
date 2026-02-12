@@ -1,0 +1,39 @@
+# BasketStats Pro v2.0 — SaaS Edition
+# ====================================
+
+# Core
+python>=3.11
+
+# Web Scraping
+playwright>=1.40.0
+beautifulsoup4>=4.12.0
+lxml>=5.1.0
+
+# Database
+supabase>=2.0.0
+psycopg2-binary>=2.9.9
+
+# Frontend
+streamlit>=1.30.0
+
+# Visualización
+plotly>=5.18.0
+
+# Data Processing
+pandas>=2.1.0
+numpy>=1.26.0
+
+# Utils
+python-dotenv>=1.0.0
+httpx>=0.25.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+nest-asyncio>=1.5.8    # Windows asyncio support for Streamlit
+
+# Scheduling / Orquestación
+schedule>=1.2.0
+
+# Dev / Testing
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
+rich>=13.7.0           # Para logs bonitos en consola
