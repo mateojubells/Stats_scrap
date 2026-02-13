@@ -501,7 +501,7 @@ with tab3:
             'Equipo': p.get('team', {}).get('name', 'N/A') if p.get('team') else 'N/A',
             'Jugador': p.get('player', {}).get('name', 'N/A') if p.get('player') else 'N/A',
             'Acción': p.get('action_type', 'N/A'),
-            'Descripción': p.get('action_text', 'N/A'),
+            'Tipo de Acción': p.get('action_type', 'N/A'),
             'Score': f"{p.get('score_home', '-')} - {p.get('score_away', '-')}"
         } for p in pbp])
         

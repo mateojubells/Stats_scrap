@@ -40,6 +40,7 @@ from database.models import (
     ShotZone,
     PlayByPlayActionType,
 )
+from scraper.pbp_parser import parse_pbp_action_text
 
 logger = logging.getLogger(__name__)
 
@@ -213,11 +214,17 @@ def parse_play_by_play(html: str, game_id: str, home_team: str, away_team: str) 
                 # Asignar team_name basándose en is_local/is_visit para evitar discrepancias
                 team_name = home_team if is_local else away_team
                 
+                # Parsear el action_text para extraer datos estructurados (esquema simplificado)
+                parsed = parse_pbp_action_text(full_text)
+                
                 events.append(PlayByPlayEvent(
                     game_id=game_id, quarter=quarter, minute=cur_time,
                     team_name=team_name, player_name=player_name,
-                    action_type=_classify_action(action_text),
-                    action_text=full_text, score_home=sh, score_away=sa,
+                    action_type=parsed["action_type"],  # Ultra-específico: 2pt_made, steal, etc.
+                    action_value=parsed["action_value"],  # Puntos (2, 3, 1) o 0
+                    stat_count=parsed["stat_count"],  # Número acumulado del paréntesis
+                    free_throws_awarded=parsed["free_throws_awarded"],  # TL generados por falta
+                    score_home=sh, score_away=sa,
                 ))
             except Exception:
                 continue

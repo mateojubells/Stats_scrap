@@ -223,7 +223,7 @@ def render_game_inspector():
                     {
                         "Periodo": p.get("quarter", "N/A"),
                         "Minuto": p.get("minute", "N/A"),
-                        "Acción": p.get("action_text", p.get("action_type", "N/A")),
+                        "Acción": p.get("action_type", "N/A"),
                         "Marcador": f"{p.get('home_score_partial', '-')}-{p.get('away_score_partial', '-')}" if p.get('home_score_partial') is not None else "N/A"
                     }
                     for p in pbp

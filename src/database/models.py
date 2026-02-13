@@ -85,15 +85,28 @@ class ShotData(BaseModel):
 # ═════════════════════════════════════════════════════════════════════════════
 
 class PlayByPlayEvent(BaseModel):
-    """Evento del play-by-play (timeline cronológica)."""
+    """
+    Evento del play-by-play (timeline cronológica) - Esquema simplificado.
+    
+    action_type ultra-específico (sin columnas redundantes):
+      Tiros: 2pt_made, 2pt_missed, 3pt_made, 3pt_missed, ft_made, ft_missed, dunk_made
+      Rebotes: reb_off, reb_def, team_rebound
+      Defensa: steal, block
+      Errores: turnover
+      Faltas: foul_comm, foul_rec, team_foul
+      Sustituciones: sub_in, sub_out
+      Otros: timeout, period_start, period_end, assist, unknown
+    """
     game_id: str
     quarter: int
     minute: str = Field(..., description="Tiempo del reloj (ej: '09:45', '00:03')")
     team_name: Optional[str] = None
     player_name: Optional[str] = None
     player_number: Optional[int] = None
-    action_type: PlayByPlayActionType
-    action_text: str = Field(..., description="Descripción original del evento")
+    action_type: str = Field(..., description="Tipo ultra-específico: 2pt_made, steal, sub_in, etc.")
+    action_value: int = Field(0, description="Puntos anotados (2,3,1) o 0 si falla/no aplica")
+    stat_count: Optional[int] = Field(None, description="Conteo acumulado: (Robos: 1) → 1")
+    free_throws_awarded: int = Field(0, description="Tiros libres generados por falta (0 si no aplica)")
     score_home: Optional[int] = None
     score_away: Optional[int] = None
     

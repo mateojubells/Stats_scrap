@@ -499,30 +499,7 @@ class SupabaseRepository:
             self._bulk_insert("stats_player_games", player_rows)
             logger.info(f"Guardadas stats de {len(player_rows)} jugadores")
 
-        # ── 4. SHOTS (ahora CON player_id) ──
-        shots_rows = []
-        for s in data.shots:
-            # team_id del shot: t0 = local, t1 = visitante
-            t_id = home_team_id if s.team_id == 0 else away_team_id
-            
-            # Buscar player_id por número de camiseta + team
-            p_id = player_number_map.get((t_id, s.player_number))
-            
-            shots_rows.append({
-                "game_id": game_db_id,
-                "player_id": p_id,  # Ahora SÍ tiene player_id
-                "team_id": t_id,
-                "x_coord": s.x_coordinate,
-                "y_coord": s.y_coordinate,
-                "made": s.result == "made",
-                "quarter": s.quarter,
-                "zone": s.zone,
-            })
-        if shots_rows:
-            self._bulk_insert("shots", shots_rows)
-            logger.info(f"Guardados {len(shots_rows)} tiros")
-
-        # ── 5. PLAY-BY-PLAY (ahora CON player_id) ──
+        # ── 4. PLAY-BY-PLAY PRIMERO (para obtener IDs y vincular shots) ──
         pbp_rows = []
         
         # Crear un map normalizado de nombres de jugadores (sin acentos, mayúsculas, etc.)
@@ -540,65 +517,30 @@ class SupabaseRepository:
         
         player_map_normalized = {normalize_name(k): v for k, v in player_map.items()}
         
-        # Crear archivo de debug
-        debug_file = f"debug_pbp_game_{game_db_id}.txt"
-        debug_lines = []
-        debug_lines.append("="*80)
-        debug_lines.append(f"DEBUG PLAY-BY-PLAY MATCHING - Game ID: {game_db_id}")
-        debug_lines.append(f"Home Team: {data.home_team} (ID: {home_team_id})")
-        debug_lines.append(f"Away Team: {data.away_team} (ID: {away_team_id})")
-        debug_lines.append("="*80)
-        debug_lines.append("\nPLAYER MAP FROM BOX SCORE:")
-        debug_lines.append("-"*80)
-        for name, pid in sorted(player_map.items()):
-            normalized = normalize_name(name)
-            debug_lines.append(f"  '{name}'")
-            debug_lines.append(f"    -> Normalizado: '{normalized}'")
-            debug_lines.append(f"    -> Player ID: {pid}")
-            debug_lines.append("")
+        unmatched_players = set()
         
-        debug_lines.append("\n" + "="*80)
-        debug_lines.append("PROCESSING PLAY-BY-PLAY EVENTS:")
-        debug_lines.append("="*80 + "\n")
-        
-        unmatched_players = set()  # Para reporte al final
-        event_num = 0
+        # Limpiar partial scores: propagar último marcador conocido
+        last_home_score = 0
+        last_away_score = 0
         
         for ev in data.play_by_play:
-            event_num += 1
-            # Resolver team_id: usar home_team y away_team directamente (ya vienen correctos del scraper)
             ev_team_id = home_team_id if ev.team_name == data.home_team else away_team_id
 
             # Resolver player_id con normalización de nombres
             ev_player_id = None
-            match_method = "NO_PLAYER"
-            
             if ev.player_name:
-                # Intentar match directo primero
                 ev_player_id = player_map.get(ev.player_name)
-                if ev_player_id:
-                    match_method = "DIRECT"
-                else:
-                    # Si falla, intentar con nombre normalizado
+                if not ev_player_id:
                     normalized = normalize_name(ev.player_name)
                     ev_player_id = player_map_normalized.get(normalized)
-                    if ev_player_id:
-                        match_method = "NORMALIZED"
-                    else:
-                        match_method = "FAILED"
-                        # Si aún falla, guardar para reporte y debug
+                    if not ev_player_id:
                         unmatched_players.add((ev.player_name, normalized, ev.action_type))
-                        
-                        # Debug detallado de este evento
-                        debug_lines.append(f"Event #{event_num} - ❌ NO MATCH FOUND")
-                        debug_lines.append(f"  Quarter {ev.quarter} @ {ev.minute}")
-                        debug_lines.append(f"  Action: {ev.action_type}")
-                        debug_lines.append(f"  Text: {ev.action_text[:100]}")
-                        debug_lines.append(f"  Player name (raw): '{ev.player_name}'")
-                        debug_lines.append(f"  Player name (normalized): '{normalized}'")
-                        debug_lines.append(f"  Team: {ev.team_name} (ID: {ev_team_id})")
-                        debug_lines.append("  Reason: Player name not found in box score player_map")
-                        debug_lines.append("")
+
+            # Propagar partial scores: usar último conocido si actual es None
+            if ev.score_home is not None:
+                last_home_score = ev.score_home
+            if ev.score_away is not None:
+                last_away_score = ev.score_away
 
             pbp_rows.append({
                 "game_id": game_db_id,
@@ -606,46 +548,86 @@ class SupabaseRepository:
                 "minute": ev.minute,
                 "team_id": ev_team_id,
                 "player_id": ev_player_id,
-                "action_type": ev.action_type,
-                "action_text": ev.action_text[:500],
-                "home_score_partial": ev.score_home,
-                "away_score_partial": ev.score_away,
+                "action_type": ev.action_type,  # Ultra-específico: 2pt_made, steal, sub_in, etc.
+                "action_value": ev.action_value or 0,
+                "stat_count": ev.stat_count,
+                "free_throws_awarded": ev.free_throws_awarded or 0,  # TL generados por falta
+                "home_score_partial": last_home_score,
+                "away_score_partial": last_away_score,
             })
+        
+        # Insertar PBP y obtener IDs generados
+        pbp_ids = []  # Lista de IDs generados en orden
         if pbp_rows:
-            self._bulk_insert("play_by_play", pbp_rows)
+            pbp_ids = self._bulk_insert_returning_ids("play_by_play", pbp_rows)
             
-            # Reportar jugadores no encontrados
             pbp_with_player = sum(1 for row in pbp_rows if row["player_id"] is not None)
             pbp_without_player = len(pbp_rows) - pbp_with_player
-            
             logger.info(f"Guardados {len(pbp_rows)} eventos PBP ({pbp_with_player} con player_id, {pbp_without_player} sin)")
             
             if unmatched_players:
                 logger.warning(f"⚠️ {len(unmatched_players)} jugadores únicos NO encontrados en play_by_play:")
                 for pname, pnorm, action in sorted(unmatched_players):
                     logger.warning(f"  - '{pname}' (normalizado: '{pnorm}') en acción: {action}")
-                logger.warning("  💡 Tip: Verifica que los nombres en play_by_play coincidan con los del box score")
-                
-                # Guardar archivo de debug
-                debug_lines.append("\n" + "="*80)
-                debug_lines.append("SUMMARY:")
-                debug_lines.append("="*80)
-                debug_lines.append(f"Total events: {len(pbp_rows)}")
-                debug_lines.append(f"Events with player_id: {pbp_with_player}")
-                debug_lines.append(f"Events without player_id: {pbp_without_player}")
-                debug_lines.append(f"Unique unmatched players: {len(unmatched_players)}")
-                debug_lines.append("\nUNMATCHED PLAYERS:")
-                for pname, pnorm, action in sorted(unmatched_players):
-                    debug_lines.append(f"  - '{pname}' (norm: '{pnorm}') in action: {action}")
-                
-                try:
-                    with open(debug_file, 'w', encoding='utf-8') as f:
-                        f.write('\n'.join(debug_lines))
-                    logger.warning(f"📄 Debug file created: {debug_file}")
-                except Exception as e:
-                    logger.error(f"Error writing debug file: {e}")
             else:
                 logger.info("✅ All play-by-play events successfully matched to players")
+
+        # ── 5. SHOTS → vinculados a PBP via pbp_id ──
+        # Construir un índice de PBP para vincular tiros
+        # Criterio: mismo quarter + mismo player_id + action_type de tiro (_made o _missed)
+        # Un PBP puede tener múltiples tiros del mismo jugador en el mismo quarter,
+        # así que usamos listas para manejar colisiones
+        from collections import defaultdict
+        pbp_shot_lists = defaultdict(list)  # (quarter, player_id) → [pbp_id, ...]
+        
+        # Nuevos action_type específicos: 2pt_made, 2pt_missed, 3pt_made, 3pt_missed, ft_made, ft_missed, dunk_made
+        shot_action_types = {"2pt_made", "2pt_missed", "3pt_made", "3pt_missed", "ft_made", "ft_missed", "dunk_made"}
+        
+        for idx, row in enumerate(pbp_rows):
+            action = row.get("action_type", "")
+            if action in shot_action_types:
+                if idx < len(pbp_ids):
+                    key = (row["quarter"], row["player_id"])
+                    # _made types incluyen: 2pt_made, 3pt_made, ft_made, dunk_made
+                    pbp_shot_lists[key].append({
+                        "pbp_id": pbp_ids[idx],
+                        "made": action.endswith("_made"),  # Detecta si termina en _made
+                    })
+        
+        shots_rows = []
+        linked_count = 0
+        for s in data.shots:
+            t_id = home_team_id if s.team_id == 0 else away_team_id
+            p_id = player_number_map.get((t_id, s.player_number))
+            
+            # Intentar vincular con PBP
+            pbp_id = None
+            if p_id:
+                key = (s.quarter, p_id)
+                candidates = pbp_shot_lists.get(key, [])
+                shot_made = s.result == "made"
+                # Buscar match con mismo resultado (made/missed)
+                for i, c in enumerate(candidates):
+                    if c["made"] == shot_made:
+                        pbp_id = c["pbp_id"]
+                        candidates.pop(i)  # Consumir para evitar doble vinculación
+                        linked_count += 1
+                        break
+            
+            shots_rows.append({
+                "game_id": game_db_id,
+                "pbp_id": pbp_id,
+                "player_id": p_id,
+                "team_id": t_id,
+                "x_coord": s.x_coordinate,
+                "y_coord": s.y_coordinate,
+                "made": s.result == "made",
+                "quarter": s.quarter,
+                "zone": s.zone,
+            })
+        if shots_rows:
+            self._bulk_insert("shots", shots_rows)
+            logger.info(f"Guardados {len(shots_rows)} tiros ({linked_count} vinculados a PBP)")
 
         # ── 6. STATS_TEAM_GAMES (COMPLETAS) ──
         # Calcular reb_off, reb_def, blocks_against, fouls_rec desde los player stats
@@ -710,10 +692,7 @@ class SupabaseRepository:
                 "blocks_for": ts.blocks or 0,
                 "blocks_against": agg.get("blocks_against", 0),
                 "fouls_comm": ts.fouls or 0,
-                "fouls_rec": agg.get("fouls_rec", 0),
-                # Columnas que existen en la tabla pero no se calculan
-                "valoracion": 0,
-                "plus_minus": 0,
+                "fouls_rec": agg.get("fouls_rec", 0)
             })
         
         # Asegurar que solo tenemos exactamente 2 team stats (home y away)
@@ -955,6 +934,29 @@ class SupabaseRepository:
                 else:
                     raise
         logger.debug(f"  → {table}: {len(rows)} filas insertadas")
+
+    def _bulk_insert_returning_ids(self, table: str, rows: List[dict], batch_size: int = 500) -> List[int]:
+        """
+        Inserta filas y retorna los IDs generados en orden.
+        Necesario para vincular shots -> play_by_play.
+        """
+        all_ids = []
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i : i + batch_size]
+            try:
+                res = self.client.table(table).insert(batch).execute()
+                all_ids.extend(row["id"] for row in res.data)
+            except Exception as e:
+                error_str = str(e)
+                if "PGRST204" in error_str or "schema cache" in error_str:
+                    logger.warning(f"Error de schema cache en {table}, refrescando y reintentando...")
+                    self.refresh_connection()
+                    res = self.client.table(table).insert(batch).execute()
+                    all_ids.extend(row["id"] for row in res.data)
+                else:
+                    raise
+        logger.debug(f"  → {table}: {len(rows)} filas insertadas, {len(all_ids)} IDs retornados")
+        return all_ids
 
     def _find_player(self, name: str, team_id: int) -> Optional[dict]:
         """Busca jugador por nombre y current_team_id (sin crear)."""
