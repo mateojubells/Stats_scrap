@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 if __name__ == "__main__":
-    ui_path = Path(__file__).parent / "src" / "ui" / "app.py"
+    ui_path = Path(__file__).parent / "src" / "admin" / "app.py"
     
     print(f"🚀 Iniciando Streamlit UI desde: {ui_path}")
     
