@@ -48,7 +48,7 @@ export function ShotDistribution() {
         </div>
       </div>
       <div className="mt-4 w-full overflow-hidden rounded-lg">
-        <FibaShotChart shots={dots} width={600} height={560} />
+        <FibaShotChart shots={dots} width={480} height={448} />
       </div>
     </div>
   )

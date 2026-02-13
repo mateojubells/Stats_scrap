@@ -90,14 +90,14 @@ export default function DashboardPage() {
       </div>
 
       {/* Main Content */}
-      <div className="mt-6 grid grid-cols-3 gap-6">
-        {/* Shot Distribution - spans 2 columns */}
-        <div className="col-span-2">
+      <div className="mt-6 grid grid-cols-5 gap-6">
+        {/* Shot Distribution - spans 3 columns */}
+        <div className="col-span-3">
           <ShotDistribution />
         </div>
 
         {/* Right Sidebar */}
-        <div className="flex flex-col gap-6">
+        <div className="col-span-2 flex flex-col gap-6">
           <PlayerOfWeek />
           <UpcomingSchedule />
         </div>
