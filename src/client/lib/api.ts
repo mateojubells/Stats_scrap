@@ -59,11 +59,13 @@ export async function getTeamGames(teamId: number): Promise<Game[]> {
 }
 
 export async function getUpcomingGames(teamId: number, limit = 3): Promise<Game[]> {
+  const today = new Date().toISOString()
   const { data } = await supabase
     .from("games")
     .select("*, home_team:teams!games_home_team_id_fkey(*), away_team:teams!games_away_team_id_fkey(*)")
     .or(`home_team_id.eq.${teamId},away_team_id.eq.${teamId}`)
-    .eq("status", "PENDING")
+    .eq("status", "SCHEDULED")
+    .gte("date", today)
     .order("date", { ascending: true })
     .limit(limit)
   return data ?? []

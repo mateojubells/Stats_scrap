@@ -279,8 +279,8 @@ export function FibaShotChart({ shots, className = "" }: FibaShotChartProps) {
             const svgY = toSvgY(shot.y)
 
             const fill = shot.made
-              ? "rgba(38, 255, 0, 0.8)"   // Neon green
-              : "rgba(255, 0, 0, 0.75)"  // Red
+              ? "#39FF14"   // Verde Neón
+              : "#FF3131"   // Rojo Neón
 
             const filter = shot.made ? "url(#glow-green)" : "url(#glow-red)"
 
@@ -289,11 +289,11 @@ export function FibaShotChart({ shots, className = "" }: FibaShotChartProps) {
                 key={idx}
                 cx={svgX}
                 cy={svgY}
-                r={1.2}
+                r={0.8}
                 fill={fill}
                 stroke="rgba(255, 255, 255, 0.4)"
-                strokeWidth={0.3}
-                opacity={0.7}
+                strokeWidth={0.25}
+                opacity={0.8}
                 filter={filter}
               />
             )

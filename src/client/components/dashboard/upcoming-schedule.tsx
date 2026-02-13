@@ -41,6 +41,7 @@ export function UpcomingSchedule() {
                 .split(" ")
             : ["?", "?"]
           const isNext = idx === 0
+          const jornada = g.jornada ? `J${g.jornada}` : ""
 
           return (
             <div
@@ -62,10 +63,11 @@ export function UpcomingSchedule() {
               <div className="flex h-7 items-center justify-center rounded px-2 text-xs font-bold bg-primary/15 text-primary">
                 {abbr}
               </div>
-              <div className="flex-1"              >
+              <div className="flex-1">
                 <p className="text-sm font-medium text-foreground">
                   {isHome ? "vs " : "@ "}
                   {opp?.name ?? "?"}
+                  {jornada && <span className="ml-2 text-xs text-muted-foreground">{jornada}</span>}
                 </p>
                 {g.date && (
                   <p className="text-xs text-muted-foreground">
