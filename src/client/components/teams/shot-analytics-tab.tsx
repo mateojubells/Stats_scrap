@@ -42,16 +42,9 @@ export function ShotAnalyticsTab({ teamId }: ShotAnalyticsTabProps) {
     const fga = shots.length
     const fgm = shots.filter((s) => s.made).length
 
-    // Identify 3-pointers by zone or coordinate distance from basket
-    const isThree = (s: Shot) => {
-      if (s.zone?.includes("3") || s.zone?.toLowerCase().includes("three"))
-        return true
-      // FIBA 3pt distance from basket at (50, 5.75) in data coords
-      const dx = s.x_coord - 50
-      const dy = s.y_coord - 5.75
-      const dist = Math.sqrt(dx * dx + dy * dy)
-      return dist > 25 // approx FIBA 3pt line in our coordinate system
-    }
+    // Clasificación de 3PT: lee directamente la columna zone de la BD
+    // Valores posibles: "3pt", "paint", "mid-range"
+    const isThree = (s: Shot) => s.zone === "3pt"
 
     const threes = shots.filter(isThree)
     const twos = shots.filter((s) => !isThree(s))

@@ -131,6 +131,44 @@ export async function getTeamSeasonAverages(teamId: number) {
 }
 
 // ══════════════════════════════════════════════════════════════
+// GAME CENTER  (single-game queries by gameId)
+// ══════════════════════════════════════════════════════════════
+
+export async function getGameById(gameId: number): Promise<Game | null> {
+  const { data } = await supabase
+    .from("games")
+    .select("*, home_team:teams!games_home_team_id_fkey(*), away_team:teams!games_away_team_id_fkey(*)")
+    .eq("id", gameId)
+    .single()
+  return data
+}
+
+export async function getGamePlayerStats(gameId: number): Promise<StatsPlayerGame[]> {
+  const { data } = await supabase
+    .from("stats_player_games")
+    .select("*, player:players(*)")
+    .eq("game_id", gameId)
+  return data ?? []
+}
+
+export async function getGameTeamStats(gameId: number): Promise<StatsTeamGame[]> {
+  const { data } = await supabase
+    .from("stats_team_games")
+    .select("*")
+    .eq("game_id", gameId)
+  return data ?? []
+}
+
+export async function getGamePlayByPlay(gameId: number): Promise<PlayByPlay[]> {
+  const { data } = await supabase
+    .from("play_by_play")
+    .select("*")
+    .eq("game_id", gameId)
+    .order("id", { ascending: true })
+  return (data ?? []) as PlayByPlay[]
+}
+
+// ══════════════════════════════════════════════════════════════
 // SHOTS  (for shot charts)
 // ══════════════════════════════════════════════════════════════
 
@@ -267,16 +305,24 @@ export async function getTeamAdvancedStats(teamId: number) {
     data.reduce((a, r) => a + ((r[key] as number) || 0), 0)
 
   const fgMade = sum("fg_made")
-  const fgAtt = sum("fg_att")
+  const fgAtt = sum("fg_att")   // GARANTIZADO: suma de INTENTADOS (made + missed)
   const t3Made = sum("t3_made")
-  const ppg = ((fgMade * 2 + t3Made + sum("ft_made")) / n).toFixed(1)
+  const ftMade = sum("ft_made")
+  const ftAtt = sum("ft_att")
+  
+  // PPG: Usar puntos totales del box score para mayor precisión
+  const totalPoints = sum("points")
+  const ppg = (totalPoints / n).toFixed(1)
+  
+  // eFG% = (FGM + 0.5 * 3PM) / FGA
+  // CRÍTICO: FGA es el denominador correcto (total intentados, no solo anotados)
   const efg = fgAtt > 0 ? (((fgMade + 0.5 * t3Made) / fgAtt) * 100).toFixed(1) : "0"
   
   // EFF = (Puntos + Reb + Ast + Stl + Blk) - (FGA - FGM + FTA - FTM + TO)
-  const pts = fgMade * 2 + t3Made + sum("ft_made")
-  const fgMissed = sum("fg_att") - fgMade
-  const ftMissed = sum("ft_att") - sum("ft_made")
-  const eff = ((pts + sum("reb_tot") + sum("assists") + sum("steals") + sum("blocks_for")) - (fgMissed + ftMissed + sum("turnovers"))) / n
+  // FG Missed = FGA - FGM (correctamente calculado)
+  const fgMissed = fgAtt - fgMade
+  const ftMissed = ftAtt - ftMade
+  const eff = ((totalPoints + sum("reb_tot") + sum("assists") + sum("steals") + sum("blocks_for")) - (fgMissed + ftMissed + sum("turnovers"))) / n
 
   return {
     gamesPlayed: n,
@@ -310,15 +356,20 @@ export async function getTeamRecentStats(teamId: number, lastN = 3) {
     data.reduce((a, r) => a + ((r[key] as number) || 0), 0)
 
   const fgMade = sum("fg_made")
-  const fgAtt = sum("fg_att")
+  const fgAtt = sum("fg_att")   // GARANTIZADO: suma de INTENTADOS
   const t3Made = sum("t3_made")
-  const ppg = ((fgMade * 2 + t3Made + sum("ft_made")) / n).toFixed(1)
+  const ftMade = sum("ft_made")
+  const ftAtt = sum("ft_att")
+  
+  const totalPoints = sum("points")
+  const ppg = (totalPoints / n).toFixed(1)
+  
+  // eFG% = (FGM + 0.5 * 3PM) / FGA
   const efg = fgAtt > 0 ? (((fgMade + 0.5 * t3Made) / fgAtt) * 100).toFixed(1) : "0"
   
-  const pts = fgMade * 2 + t3Made + sum("ft_made")
-  const fgMissed = sum("fg_att") - fgMade
-  const ftMissed = sum("ft_att") - sum("ft_made")
-  const eff = ((pts + sum("reb_tot") + sum("assists") + sum("steals") + sum("blocks_for")) - (fgMissed + ftMissed + sum("turnovers"))) / n
+  const fgMissed = fgAtt - fgMade
+  const ftMissed = ftAtt - ftMade
+  const eff = ((totalPoints + sum("reb_tot") + sum("assists") + sum("steals") + sum("blocks_for")) - (fgMissed + ftMissed + sum("turnovers"))) / n
 
   return {
     ppg,
@@ -362,13 +413,14 @@ export async function getLeagueBenchmark(leagueId?: number) {
       rows.reduce((a, r) => a + ((r[key] as number) || 0), 0)
 
     const fgMade = sum("fg_made")
-    const fgAtt = sum("fg_att")
+    const fgAtt = sum("fg_att")   // GARANTIZADO: suma de INTENTADOS
     const t3Made = sum("t3_made")
     const t3Att = sum("t3_att")
     const ftMade = sum("ft_made")
     const ftAtt = sum("ft_att")
+    const totalPoints = sum("points")
 
-    const ppg = (fgMade * 2 + t3Made + ftMade) / n
+    const ppg = totalPoints / n
     const rpg = sum("reb_tot") / n
     const apg = sum("assists") / n
     const spg = sum("steals") / n
@@ -376,7 +428,7 @@ export async function getLeagueBenchmark(leagueId?: number) {
     const efg = fgAtt > 0 ? ((fgMade + 0.5 * t3Made) / fgAtt) * 100 : 0
     const ftRate = fgAtt > 0 ? (ftAtt / fgAtt) * 100 : 0
     const orbPct = sum("reb_off") / n
-    const tovPct = tpg // simplified
+    const tovPct = tpg
 
     return {
       teamId: team.id,
@@ -817,6 +869,614 @@ export async function getTeamScoringBreakdown(teamId: number) {
   const regular = totalPoints - offTurnover - secondChance - fastbreak
 
   return { offTurnover, fastbreak, secondChance, regular }
+}
+
+// ══════════════════════════════════════════════════════════════
+// PLAYER PROFILE — Advanced queries
+// ══════════════════════════════════════════════════════════════
+
+/** Full game log for a player with game details — sorted by date ascending for charts */
+export async function getPlayerFullGameLog(
+  playerId: number,
+  teamId: number,
+): Promise<(StatsPlayerGame & { game: Game })[]> {
+  const { data } = await supabase
+    .from("stats_player_games")
+    .select(
+      "*, game:games(*, home_team:teams!games_home_team_id_fkey(*), away_team:teams!games_away_team_id_fkey(*))",
+    )
+    .eq("player_id", playerId)
+    .eq("team_id", teamId)
+    .order("id", { ascending: true })
+  return (data ?? []) as any
+}
+
+/** Get shots for a player filtered by game IDs */
+export async function getPlayerShotsFiltered(
+  playerId: number,
+  gameIds?: number[],
+): Promise<Shot[]> {
+  let query = supabase.from("shots").select("*").eq("player_id", playerId)
+  if (gameIds && gameIds.length > 0) {
+    query = query.in("game_id", gameIds)
+  }
+  const { data } = await query
+  return data ?? []
+}
+
+/** Get shots for a player tagged with isAssisted (% de Canastas Asistidas) using pbp_id linkage.
+ *  A shot is assisted (asistida) if the PBP event near it (by id, same game)
+ *  has action_type = 'assist'.  For missed shots (which never have an
+ *  assist event), we use a heuristic: if the nearest significant same-team
+ *  event before the miss was by a different player → likely a pass.
+ *  Otherwise it is Pull-up / off-dribble.
+ *  
+ *  LIMITACIÓN: Los tiros fallados siempre aparecen como "No asistidos" porque
+ *  la FEB PBP solo registra asistencias en canastas metidas. Los tiros fallados
+ *  tras pase no pueden calcularse con exactitud desde los datos oficiales. */
+export async function getPlayerShotsTagged(
+  playerId: number,
+  teamId?: number,
+  gameIds?: number[],
+): Promise<(Shot & { isAssisted: boolean })[]> {
+  // 1. Fetch shots
+  let shotQuery = supabase.from("shots").select("*").eq("player_id", playerId)
+  if (gameIds && gameIds.length > 0) shotQuery = shotQuery.in("game_id", gameIds)
+  const { data: shotsRaw } = await shotQuery
+  const shots: Shot[] = shotsRaw ?? []
+
+  if (shots.length === 0) return []
+
+  // 2. Fetch all PBP for these games (include team_id and player_name for assist matching)
+  const gids = gameIds ?? [...new Set(shots.map((s) => s.game_id))]
+  if (gids.length === 0) return shots.map((s) => ({ ...s, isAssisted: false }))
+
+  const { data: pbpRaw } = await supabase
+    .from("play_by_play")
+    .select("id, game_id, action_type, player_id, team_id")
+    .in("game_id", gids)
+    .order("id", { ascending: true })
+    .limit(10000)
+
+  type PbpRow = Pick<PlayByPlay, "id" | "game_id" | "action_type" | "player_id"> & { team_id: number | null }
+  const allPbp = (pbpRaw ?? []) as PbpRow[]
+
+  // 3. Build per-game PBP index sorted by id
+  const pbpByGame = new Map<number, PbpRow[]>()
+  for (const ev of allPbp) {
+    if (!pbpByGame.has(ev.game_id)) pbpByGame.set(ev.game_id, [])
+    pbpByGame.get(ev.game_id)!.push(ev)
+  }
+
+  // 4. Build a lookup: pbp.id → index in game array
+  const pbpIdToIndex = new Map<number, { game_id: number; idx: number }>()
+  for (const [gid, events] of pbpByGame) {
+    for (let i = 0; i < events.length; i++) {
+      pbpIdToIndex.set(events[i].id, { game_id: gid, idx: i })
+    }
+  }
+
+  // Helper: non-trivial action types that break the assist-search window
+  const breaksSearch = (a: string | undefined) =>
+    !!a && (a.includes("made") || a.includes("missed") || a.includes("turnover"))
+
+  // Insignificant actions (subs, timeouts, etc.) — skip when looking for teammate context
+  const insignificant = new Set([
+    "sub_in", "sub_out", "timeout", "period_start", "period_end",
+    "team_foul", "team_rebound",
+  ])
+
+  // 5. Tag each shot
+  return shots.map((shot) => {
+    if (!shot.pbp_id) return { ...shot, isAssisted: false }
+
+    const ref = pbpIdToIndex.get(shot.pbp_id)
+    if (!ref) return { ...shot, isAssisted: false }
+
+    const gameEvents = pbpByGame.get(ref.game_id) ?? []
+    let isAssisted = false
+
+    if (shot.made) {
+      // ── MADE shot: buscar evento 'assist' en adyacencia inmediata ──
+      // OPTIMIZADO: ventana reducida ±1 a ±2 eventos (eventos PBP contiguos en FEB)
+      
+      // Backward: -1 a -2
+      for (let i = ref.idx - 1; i >= Math.max(0, ref.idx - 2); i--) {
+        const prev = gameEvents[i]
+        if (prev.action_type === "assist") {
+          // Evento asistencia encontrado
+          // NOTA: Si player_id es null, se requeriría búsqueda en roster (implementar si necesario)
+          isAssisted = prev.player_id !== null
+          break
+        }
+        if (breaksSearch(prev.action_type)) break
+      }
+      
+      // Forward: +1 a +2 (si no encontró en backward)
+      if (!isAssisted) {
+        for (let i = ref.idx + 1; i < Math.min(ref.idx + 3, gameEvents.length); i++) {
+          const next = gameEvents[i]
+          if (next.action_type === "assist") {
+            // Evento asistencia encontrado
+            isAssisted = next.player_id !== null
+            break
+          }
+          if (breaksSearch(next.action_type)) break
+        }
+      }
+    } else {
+      // ── MISSED shot: sin evento assist. Usar heurística: ──
+      // OPTIMIZADO: ventana reducida ±1 a ±2 eventos
+      // Buscar el evento más cercano del equipo para determinar si fue pass o self-creation
+      if (teamId) {
+        for (let i = ref.idx - 1; i >= Math.max(0, ref.idx - 2); i--) {
+          const prev = gameEvents[i]
+          if (prev.team_id !== teamId && prev.team_id !== null) continue // skip opponent
+          if (insignificant.has(prev.action_type)) continue
+          if (prev.player_id && prev.player_id !== playerId) {
+            isAssisted = true // teammate had last significant action → likely a pass
+          }
+          break // stop after first significant same-team event
+        }
+      }
+    }
+
+    return { ...shot, isAssisted }
+  })
+}
+
+/** Get play-by-play events for a player */
+export async function getPlayerPBP(
+  playerId: number,
+  gameIds?: number[],
+): Promise<PlayByPlay[]> {
+  let query = supabase
+    .from("play_by_play")
+    .select("*")
+    .eq("player_id", playerId)
+    .order("id", { ascending: true })
+  if (gameIds && gameIds.length > 0) {
+    query = query.in("game_id", gameIds)
+  }
+  const { data } = await query
+  return (data ?? []) as PlayByPlay[]
+}
+
+/** Get all PBP for given games (both teams, for clutch context) */
+export async function getGamesPBP(
+  gameIds: number[],
+): Promise<PlayByPlay[]> {
+  if (gameIds.length === 0) return []
+  const { data } = await supabase
+    .from("play_by_play")
+    .select("*")
+    .in("game_id", gameIds)
+    .order("id", { ascending: true })
+  return (data ?? []) as PlayByPlay[]
+}
+
+/** Get league-wide player averages by position for benchmarking.
+ *  Groups all players in the league by a position heuristic. */
+export async function getLeaguePlayerBenchmarks(teamId: number) {
+  // Get all stats across all teams in same league
+  const { data } = await supabase
+    .from("stats_player_games")
+    .select("*, player:players(*)")
+
+  if (!data || data.length === 0) return { all: [] as any[] }
+
+  // Group by player
+  const byPlayer = new Map<
+    number,
+    { player: Player; rows: StatsPlayerGame[] }
+  >()
+  for (const s of data) {
+    const p = (s as any).player as Player | undefined
+    if (!p) continue
+    if (!byPlayer.has(p.id)) byPlayer.set(p.id, { player: p, rows: [] })
+    byPlayer.get(p.id)!.rows.push(s)
+  }
+
+  const all = Array.from(byPlayer.values()).map(({ player, rows }) => {
+    const n = rows.length
+    const sum = (fn: (s: StatsPlayerGame) => number) =>
+      rows.reduce((a, s) => a + fn(s), 0)
+    return {
+      playerId: player.id,
+      teamId: rows[0].team_id,
+      name: player.name,
+      gp: n,
+      ppg: sum((s) => s.points ?? 0) / n,
+      rpg: sum((s) => s.reb_tot ?? 0) / n,
+      apg: sum((s) => s.assists ?? 0) / n,
+      spg: sum((s) => s.steals ?? 0) / n,
+      val: sum((s) => s.valoracion ?? 0) / n,
+    }
+  })
+
+  return { all }
+}
+
+/** Get synergy data: best partners by shared plus-minus and assist connections */
+export async function getPlayerSynergyData(
+  playerId: number,
+  teamId: number,
+  gameIds?: number[],
+) {
+  console.log(`[SYNERGY] Iniciando búsqueda - Jugador: ${playerId}, Equipo: ${teamId}, Juegos: ${gameIds?.length ?? 'todos'}`)
+  
+  // Get all team stats for same games
+  let query = supabase
+    .from("stats_player_games")
+    .select("*, player:players(*), game:games(id, home_team_id, away_team_id, home_score, away_score)")
+    .eq("team_id", teamId)
+  if (gameIds && gameIds.length > 0) {
+    query = query.in("game_id", gameIds)
+  }
+  const { data: allStats } = await query
+  console.log(`[SYNERGY] Stats obtenidos: ${allStats?.length ?? 0} registros`)
+  if (!allStats) {
+    console.log(`[SYNERGY] ⚠️ No hay stats, retornando vacío`)
+    return { partners: [], assistsGiven: [], assistsReceived: [] }
+  }
+
+  // Group by game
+  const byGame = new Map<number, StatsPlayerGame[]>()
+  for (const s of allStats) {
+    const gid = s.game_id
+    if (!byGame.has(gid)) byGame.set(gid, [])
+    byGame.get(gid)!.push(s)
+  }
+
+  // For each game, pair the target player with all teammates
+  const partnerPM = new Map<
+    number,
+    { player: Player; totalPM: number; games: number }
+  >()
+
+  for (const [, gameStats] of byGame) {
+    const myStats = gameStats.find((s) => s.player_id === playerId)
+    if (!myStats) continue
+
+    for (const teammate of gameStats) {
+      if (teammate.player_id === playerId) continue
+      const p = (teammate as any).player as Player | undefined
+      if (!p) continue
+
+      if (!partnerPM.has(p.id)) {
+        partnerPM.set(p.id, { player: p, totalPM: 0, games: 0 })
+      }
+      const entry = partnerPM.get(p.id)!
+      // Shared PM is approximated as the average of both players' PM
+      entry.totalPM += ((myStats.plus_minus ?? 0) + (teammate.plus_minus ?? 0)) / 2
+      entry.games++
+    }
+  }
+
+  const partners = Array.from(partnerPM.values())
+    .map((e) => ({
+      player: e.player,
+      avgPM: e.games > 0 ? e.totalPM / e.games : 0,
+      games: e.games,
+    }))
+    .sort((a, b) => b.avgPM - a.avgPM)
+
+  console.log(`[SYNERGY] Socios encontrados: ${partners.length}`)
+
+  // ── Assist network via PBP id-sequence ──────────────────────────────
+  const gids = gameIds ?? Array.from(byGame.keys())
+  console.log(`[SYNERGY] Buscando asistencias en juegos: ${gids.length} (${gids.slice(0, 3).join(',')})`)
+
+  // NOTE: Supabase tiene límite de ~1000 filas por query. Usar batches pequeños (2 juegos)
+  // para asegurar que cada query devuelve <1000 eventos
+  let allPbp: Pick<PlayByPlay, "id" | "game_id" | "action_type" | "player_id" | "team_id">[] = []
+  
+  // Fetch PBP in batches of 2 games to avoid hitting Supabase row limits
+  const batchSize = 2
+  for (let i = 0; i < gids.length; i += batchSize) {
+    const batch = gids.slice(i, i + batchSize)
+    const batchNum = Math.floor(i / batchSize) + 1
+    const totalBatches = Math.ceil(gids.length / batchSize)
+    console.log(`[SYNERGY] Batch ${batchNum}/${totalBatches}: obteniendo juegos ${batch.join(',')}`)
+    
+    const { data: batchPbp } = await supabase
+      .from("play_by_play")
+      .select("id, game_id, action_type, player_id, team_id")
+      .in("game_id", batch)
+      .order("game_id", { ascending: true })
+      .order("id", { ascending: true })
+    
+    const batchData = (batchPbp ?? []) as Pick<PlayByPlay, "id" | "game_id" | "action_type" | "player_id" | "team_id">[]
+    console.log(`[SYNERGY]   ✓ ${batchData.length} eventos en este batch`)
+    allPbp = allPbp.concat(batchData)
+  }
+
+  console.log(`[SYNERGY] ✅ PBP TOTAL: ${allPbp.length} eventos de ${gids.length} juegos`)
+
+  // Group per game
+  const pbpByGame = new Map<number, typeof allPbp>()
+  for (const ev of allPbp) {
+    if (!pbpByGame.has(ev.game_id)) pbpByGame.set(ev.game_id, [])
+    pbpByGame.get(ev.game_id)!.push(ev)
+  }
+
+  console.log(`[SYNERGY] PBP agrupado: ${pbpByGame.size} juegos con datos de ${gids.length} esperados`)
+  
+  // Log which games have PBP data
+  const gamesWithPbp = Array.from(pbpByGame.keys()).sort((a, b) => a - b)
+  const gamesWithoutPbp = gids.filter(g => !gamesWithPbp.includes(g))
+  if (gamesWithoutPbp.length > 0) {
+    console.warn(`[SYNERGY] ⚠️ Juegos SIN datos PBP (${gamesWithoutPbp.length}): ${gamesWithoutPbp.join(', ')}`)
+  } else {
+    console.log(`[SYNERGY] ✓ TODOS los ${gids.length} juegos tienen datos de PBP`)
+  }
+
+  // Debug: check how many events player has in PBP
+  const playerEventsCount = allPbp.filter(ev => ev.player_id === playerId).length
+  console.log(`[SYNERGY] Eventos del jugador ${playerId} en PBP total: ${playerEventsCount}`)
+  
+  if (allPbp.length === 0) {
+    console.warn(`[SYNERGY] ⚠️ NO HAY DATOS DE PBP para estos ${gids.length} juegos`)
+    console.warn(`[SYNERGY] Juegos solicitados: ${gids.join(', ')}`)
+  }
+
+  // Build player lookup: include ALL players from all games (not just team roster)
+  // This ensures we can find assists/scorers from both teams
+  const playerMap = new Map<number, Player>()
+  
+  // First: add players from stats (those who played)
+  for (const [, stats] of byGame) {
+    for (const s of stats) {
+      const p = (s as any).player as Player | undefined
+      if (p) playerMap.set(p.id, p)
+    }
+  }
+  
+  // Second: add all team roster players from separate query
+  const { data: rosterRaw } = await supabase
+    .from("players")
+    .select("*")
+    .eq("current_team_id", teamId)
+  
+  const roster = (rosterRaw ?? []) as Player[]
+  for (const p of roster) {
+    if (!playerMap.has(p.id)) {
+      playerMap.set(p.id, p)
+    }
+  }
+
+  // Third: extract all unique player_ids from PBP events and fetch missing players
+  // This handles players from opposing teams who may have scored or assisted
+  const pbpPlayerIds = new Set<number>()
+  for (const ev of allPbp) {
+    if (ev.player_id) {
+      pbpPlayerIds.add(ev.player_id)
+    }
+  }
+
+  const missingPlayerIds = Array.from(pbpPlayerIds).filter(id => !playerMap.has(id))
+  if (missingPlayerIds.length > 0) {
+    const { data: missingPlayersRaw } = await supabase
+      .from("players")
+      .select("*")
+      .in("id", missingPlayerIds)
+    
+    const missingPlayers = (missingPlayersRaw ?? []) as Player[]
+    for (const p of missingPlayers) {
+      playerMap.set(p.id, p)
+    }
+  }
+
+  const assistsGiven = new Map<number, { player: Player; count: number }>()
+  const assistsReceived = new Map<number, { player: Player; count: number }>()
+
+  // Helper: actions that break the search window
+  const breaksSearch = (a: string | undefined) =>
+    !!a && (a.includes("made") || a.includes("missed") || a.includes("turnover"))
+
+  let assistsGivenAttempts = 0
+  let assistsGivenFound = 0
+  let assistsReceivedAttempts = 0
+  let assistsReceivedFound = 0
+
+  for (const [gameId, events] of pbpByGame) {
+    for (let i = 0; i < events.length; i++) {
+      const ev = events[i]
+
+      // ── ASSIST GIVEN: player_id = assister → find scorer ──
+      // FEB PBP may record the basket BEFORE or AFTER the assist event,
+      // so we search in BOTH directions with an expanded window
+      if (ev.action_type === "assist" && ev.player_id === playerId) {
+        assistsGivenAttempts++
+        let scorerId: number | null = null
+
+        // Look backward (basket may precede assist in FEB PBP)
+        // Expanded from 3 to 5 events to catch more assists
+        for (let j = i - 1; j >= Math.max(0, i - 5); j--) {
+          const prev = events[j]
+          if (prev.action_type?.includes("made") && prev.player_id && prev.player_id !== playerId) {
+            scorerId = prev.player_id
+            break
+          }
+          if (prev.action_type === "assist" || breaksSearch(prev.action_type)) break
+        }
+        // Look forward (basket may follow assist)
+        // Expanded from 4 to 6 events to catch more assists
+        if (!scorerId) {
+          for (let j = i + 1; j < Math.min(i + 6, events.length); j++) {
+            const next = events[j]
+            if (next.action_type?.includes("made") && next.player_id && next.player_id !== playerId) {
+              scorerId = next.player_id
+              break
+            }
+            if (next.action_type === "assist" || breaksSearch(next.action_type)) break
+          }
+        }
+
+        if (scorerId) {
+          assistsGivenFound++
+          const scorer = playerMap.get(scorerId)
+          if (scorer) {
+            if (!assistsGiven.has(scorer.id)) {
+              assistsGiven.set(scorer.id, { player: scorer, count: 0 })
+            }
+            assistsGiven.get(scorer.id)!.count++
+          }
+        }
+      }
+
+      // ── ASSIST RECEIVED: player made basket → find assister ──
+      // Search both directions for the assist event with expanded window
+      if (ev.action_type?.includes("made") && !ev.action_type.includes("ft_") && ev.player_id === playerId) {
+        assistsReceivedAttempts++
+        let assisterId: number | null = null
+
+        // Look backward (assist may precede basket)
+        // Expanded from 3 to 5 events
+        for (let j = i - 1; j >= Math.max(0, i - 5); j--) {
+          const prev = events[j]
+          if (prev.action_type === "assist" && prev.player_id && prev.player_id !== playerId) {
+            assisterId = prev.player_id
+            break
+          }
+          if (breaksSearch(prev.action_type)) break
+        }
+        // Look forward (assist may follow basket in FEB PBP)
+        // Expanded from 4 to 6 events
+        if (!assisterId) {
+          for (let j = i + 1; j < Math.min(i + 6, events.length); j++) {
+            const next = events[j]
+            if (next.action_type === "assist" && next.player_id && next.player_id !== playerId) {
+              assisterId = next.player_id
+              break
+            }
+            if (breaksSearch(next.action_type)) break
+          }
+        }
+
+        if (assisterId) {
+          assistsReceivedFound++
+          const assister = playerMap.get(assisterId)
+          if (assister) {
+            if (!assistsReceived.has(assister.id)) {
+              assistsReceived.set(assister.id, { player: assister, count: 0 })
+            }
+            assistsReceived.get(assister.id)!.count++
+          }
+        }
+      }
+    }
+  }
+
+  // Get full lists BEFORE slicing
+  const allAssistsGiven = Array.from(assistsGiven.values()).sort((a, b) => b.count - a.count)
+  const allAssistsReceived = Array.from(assistsReceived.values()).sort((a, b) => b.count - a.count)
+  
+  console.log(`[SYNERGY] ✅ ANÁLISIS COMPLETO:`)
+  console.log(`  - Asistencias TOTALES dadas: ${allAssistsGiven.length}`)
+  console.log(`  - Asistencias TOTALES recibidas: ${allAssistsReceived.length}`)
+  console.log(`  - Eventos 'assist' encontrados para ${playerId}: ${assistsGivenAttempts}`)
+  console.log(`  - Canastas hechas por ${playerId}: ${assistsReceivedAttempts}`)
+  console.log(`  - Asistencias dadas ENCONTRADAS: ${assistsGivenFound}`)
+  console.log(`  - Asistencias recibidas ENCONTRADAS: ${assistsReceivedFound}`)
+  
+  // Log top 10
+  console.log(`  - TOP Asistencias dadas (todas):`)
+  allAssistsGiven.slice(0, 10).forEach((a, idx) => console.log(`    ${idx+1}. ${a.player.name}: ${a.count}`))
+  console.log(`  - TOP Asistencias recibidas (todas):`)
+  allAssistsReceived.slice(0, 10).forEach((a, idx) => console.log(`    ${idx+1}. ${a.player.name}: ${a.count}`))
+  
+  const result = {
+    partners: partners.slice(0, 5),
+    assistsGiven: allAssistsGiven.slice(0, 10),  // Show top 10 instead of 5
+    assistsReceived: allAssistsReceived.slice(0, 10),  // Show top 10 instead of 5
+  }
+  
+  console.log(`[SYNERGY] Retornando TOP 10 de cada una (antes eran solo 5)`)
+  
+  return result
+}
+
+/** Get single-player on/off impact */
+export async function getSinglePlayerOnOff(
+  playerId: number,
+  teamId: number,
+  gameIds?: number[],
+) {
+  let query = supabase
+    .from("stats_player_games")
+    .select("*, game:games(id, home_team_id, away_team_id, home_score, away_score)")
+    .eq("player_id", playerId)
+    .eq("team_id", teamId)
+  if (gameIds && gameIds.length > 0) {
+    query = query.in("game_id", gameIds)
+  }
+  const { data } = await query
+  if (!data || data.length === 0) return null
+
+  let totalOnPM = 0
+  let totalOffPM = 0
+  let totalMinutes = 0
+  let totalPossessions = 0
+
+  for (const r of data) {
+    const game = (r as any).game
+    if (!game) continue
+
+    const isHome = game.home_team_id === teamId
+    const gameMargin = isHome
+      ? (game.home_score ?? 0) - (game.away_score ?? 0)
+      : (game.away_score ?? 0) - (game.home_score ?? 0)
+
+    const onPM = r.plus_minus ?? 0
+    totalOnPM += onPM
+    totalOffPM += gameMargin - onPM
+
+    const m = r.minutes as string | null
+    if (m) {
+      const parts = m.split(":")
+      totalMinutes += parseInt(parts[0] || "0") + parseInt(parts[1] || "0") / 60
+    }
+
+    // Estimate possessions: FGA + 0.44*FTA + TO
+    const fga = (r.t2_att ?? 0) + (r.t3_att ?? 0)
+    const fta = r.ft_att ?? 0
+    const to = r.turnovers ?? 0
+    totalPossessions += fga + 0.44 * fta + to
+  }
+
+  const gp = data.length
+
+  // Get team total possessions for USG% calculation
+  let teamQuery = supabase
+    .from("stats_player_games")
+    .select("t2_att, t3_att, ft_att, turnovers, minutes")
+    .eq("team_id", teamId)
+  if (gameIds && gameIds.length > 0) {
+    teamQuery = teamQuery.in("game_id", gameIds)
+  }
+  const { data: teamStats } = await teamQuery
+
+  let teamTotalPoss = 0
+  if (teamStats) {
+    for (const ts of teamStats) {
+      const fga = (ts.t2_att ?? 0) + (ts.t3_att ?? 0)
+      teamTotalPoss += fga + 0.44 * (ts.ft_att ?? 0) + (ts.turnovers ?? 0)
+    }
+  }
+
+  const usgPct = teamTotalPoss > 0 ? (totalPossessions / teamTotalPoss) * 100 : 0
+
+  return {
+    gp,
+    avgMinutes: (totalMinutes / gp).toFixed(1),
+    onCourtPM: (totalOnPM / gp).toFixed(1),
+    offCourtPM: (totalOffPM / gp).toFixed(1),
+    netDiff: ((totalOnPM - totalOffPM) / gp).toFixed(1),
+    usgPct: usgPct.toFixed(1),
+    totalOnPM,
+    totalOffPM,
+  }
 }
 
 /** Top jugadores por EFF (valoración) */

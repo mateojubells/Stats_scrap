@@ -3,9 +3,9 @@ League Manager - Importar calendarios de ligas
 """
 
 import streamlit as st
-import asyncio
 import pandas as pd
 from datetime import datetime
+from src.admin.session_utils import run_async
 
 def render_league_manager():
     """Renderiza el gestor de ligas con importación de calendarios."""
@@ -90,7 +90,7 @@ def render_league_manager():
                     from src.shared.scraper.league_crawler import crawl_league
                     
                     # Run async function
-                    games_list = asyncio.run(crawl_league(
+                    games_list = run_async(crawl_league(
                         calendar_url=league["base_url"],
                         repository=repo,
                         league_id=league_id,
@@ -120,7 +120,7 @@ def render_league_manager():
                         
                         from src.shared.scraper.league_crawler import crawl_league
                         
-                        games_list = asyncio.run(crawl_league(
+                        games_list = run_async(crawl_league(
                             calendar_url=league["base_url"],
                             repository=repo,
                             league_id=league_id,

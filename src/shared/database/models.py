@@ -30,14 +30,10 @@ class ShotResult(str, Enum):
 
 
 class ShotZone(str, Enum):
-    """Zonas de la cancha (clasificación NBA-style)."""
+    """Zonas de la cancha (3 categorías unificadas)."""
     PAINT = "paint"
     MID_RANGE = "mid-range"
-    CORNER_3 = "corner-3"
-    WING_3 = "wing-3"
-    TOP_3 = "top-3"
-    FREE_THROW = "free-throw"
-    OTHER = "other"
+    THREE_POINT = "3pt"
 
 
 class PlayByPlayActionType(str, Enum):

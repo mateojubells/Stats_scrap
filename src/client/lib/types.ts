@@ -71,6 +71,7 @@ export interface StatsTeamGame {
   id: number
   game_id: number
   team_id: number
+  points: number
   t2_pct: number | null
   t3_pct: number | null
   ft_pct: number | null

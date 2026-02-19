@@ -52,19 +52,14 @@ BASE_URL = "https://www.feb.es/competiciones/partido/{game_id}"
 # ═════════════════════════════════════════════════════════════════════════════
 
 def classify_zone(x_pct: float, y_pct: float) -> ShotZone:
-    if 35 <= x_pct <= 65 and y_pct < 30:
-        return ShotZone.PAINT
-    if (x_pct < 10 or x_pct > 90) and 20 <= y_pct <= 60:
-        return ShotZone.CORNER_3
-    if (15 <= x_pct <= 35 or 65 <= x_pct <= 85) and y_pct > 60:
-        return ShotZone.WING_3
-    if 40 <= x_pct <= 60 and y_pct > 70:
-        return ShotZone.TOP_3
-    if 25 <= x_pct <= 75 and 30 <= y_pct <= 65:
-        return ShotZone.MID_RANGE
-    if 45 <= x_pct <= 55 and 15 <= y_pct <= 25:
-        return ShotZone.FREE_THROW
-    return ShotZone.OTHER
+    """
+    Clasificación preliminar basada en coordenadas RAW de FEB (pre-rotación).
+    La zona final se determina en repository.save_game_stats() usando:
+      1. action_type del PBP vinculado (3pt_made/3pt_missed → 3pt)
+      2. Coordenadas normalizadas post-rotación (paint vs mid-range)
+    """
+    # Devolver mid-range como placeholder; la zona real se asigna en save_game_stats
+    return ShotZone.MID_RANGE
 
 
 # ═════════════════════════════════════════════════════════════════════════════

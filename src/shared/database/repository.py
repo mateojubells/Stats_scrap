@@ -588,48 +588,163 @@ class SupabaseRepository:
             if action in shot_action_types:
                 if idx < len(pbp_ids):
                     key = (row["quarter"], row["player_id"])
-                    # _made types incluyen: 2pt_made, 3pt_made, ft_made, dunk_made
                     pbp_shot_lists[key].append({
                         "pbp_id": pbp_ids[idx],
-                        "made": action.endswith("_made"),  # Detecta si termina en _made
+                        "made": action.endswith("_made"),
+                        "action_type": action,  # Guardar action_type para clasificar zona
                     })
+        
+        # ── Función de clasificación de zona unificada ──
+        # Coordenadas en espacio normalizado post-rotación:
+        #   X ∈ [0,100], Y ∈ [0,50], canasta en (50, ~5.5)
+        # 
+        # PAINT (rectángulo calibrado):
+        #   X: [33.46, 66.28]  Y: [0, 19.94]
+        #
+        # LÍNEA DE TRIPLE (perímetro FIBA calibrado):
+        #   Líneas rectas: X ∈ [0, 10.26] o [89.90, 100], Y ∈ [0, 12.83]
+        #   Arco: centro (50, 5.75), radio ≈ 25 unidades, punto más alto Y=31.33
+        PAINT_X_MIN, PAINT_X_MAX = 33.46, 66.28
+        PAINT_Y_MAX = 19.94
+        THREE_ARC_CENTER_X, THREE_ARC_CENTER_Y = 50.0, 5.75
+        THREE_ARC_RADIUS = 25.4  # Calibrado: sqrt((50.16-50)^2 + (31.33-5.75)^2) ≈ 25.58
+        THREE_CORNER_X_LEFT = 10.26
+        THREE_CORNER_X_RIGHT = 89.90
+        THREE_CORNER_Y_MAX = 12.83
+        
+        def classify_zone_final(x: float, y: float, pbp_action_type: str = None) -> str:
+            """
+            Clasificación de zona en 3 categorías: 3pt, paint, mid-range.
+            Prioridad:
+              1. PBP action_type (3pt_made/3pt_missed → "3pt")
+              2. Coordenadas: paint → "paint", fuera del arco → "3pt", resto → "mid-range"
+            """
+            # Paso 1: PBP indica triple → 3pt directamente
+            if pbp_action_type and pbp_action_type.startswith("3pt"):
+                return "3pt"
+            
+            # Paso 2: PBP indica 2pt o dunk → solo paint o mid-range
+            is_confirmed_2pt = pbp_action_type and (pbp_action_type.startswith("2pt") or pbp_action_type.startswith("dunk"))
+            
+            # Paso 2a: ¿Está en el PAINT?
+            if PAINT_X_MIN <= x <= PAINT_X_MAX and 0 <= y <= PAINT_Y_MAX:
+                return "paint"
+            
+            # Paso 2b: Si PBP confirma 2pt/dunk, es mid-range (no puede ser triple)
+            if is_confirmed_2pt:
+                return "mid-range"
+            
+            # Paso 3: Sin PBP vinculado → usar geometría de línea de triple
+            # Esquinas: líneas rectas verticales (X < 10.26 o X > 89.90, Y < 12.83)
+            if (x <= THREE_CORNER_X_LEFT or x >= THREE_CORNER_X_RIGHT) and y <= THREE_CORNER_Y_MAX:
+                return "3pt"
+            
+            # Arco: distancia al centro de la canasta > radio
+            dx = x - THREE_ARC_CENTER_X
+            dy = y - THREE_ARC_CENTER_Y
+            dist = (dx * dx + dy * dy) ** 0.5
+            if dist >= THREE_ARC_RADIUS:
+                return "3pt"
+            
+            # Todo lo demás: mid-range
+            return "mid-range"
+        
+        # ── Helper: determinar si coordenadas están más allá de la línea de 3pt ──
+        def _is_beyond_3pt_line(x: float, y: float) -> bool:
+            """True si las coordenadas normalizadas caen fuera/sobre la línea de triple."""
+            # Esquinas: líneas rectas
+            if (x <= THREE_CORNER_X_LEFT or x >= THREE_CORNER_X_RIGHT) and y <= THREE_CORNER_Y_MAX:
+                return True
+            # Arco: distancia al centro de la canasta
+            dx = x - THREE_ARC_CENTER_X
+            dy = y - THREE_ARC_CENTER_Y
+            dist = (dx * dx + dy * dy) ** 0.5
+            return dist >= THREE_ARC_RADIUS
         
         shots_rows = []
         linked_count = 0
+        unlinked_count = 0
         for s in data.shots:
             t_id = home_team_id if s.team_id == 0 else away_team_id
             p_id = player_number_map.get((t_id, s.player_number))
             
-            # Intentar vincular con PBP
+            # ── PASO 1: PLEGAR COORDENADAS PRIMERO ──
+            # FEB muestra cancha horizontal completa (2 mitades, baskets izq/der)
+            # parse_shots asigna: x_coordinate = CSS left, y_coordinate = CSS top
+            #
+            # CSS left ∈ [0,100] → largo de la cancha (basket a basket)
+            # CSS top  ∈ [0,100] → ancho de la cancha (banda a banda)
+            #
+            # Resultado en BD (media cancha):
+            #   x_coord ∈ [0,100] → ancho (viene de CSS top)
+            #   y_coord ∈ [0, 50] → profundidad desde línea de fondo (viene de CSS left)
+            #   Canasta en aprox (50, 5.75)
+            #
+            # Regla: si left > 50 (mitad lejana), espejar ambas coordenadas
+            
+            css_left = s.x_coordinate  # posición a lo largo de la cancha
+            css_top = s.y_coordinate   # posición a lo ancho de la cancha
+            
+            if css_left > 50:
+                # Mitad lejana → espejar para plegar sobre media cancha
+                x_norm = 100 - css_top    # ancho espejado
+                y_norm = 100 - css_left   # profundidad espejada → [0, 50)
+            else:
+                # Mitad cercana → usar directamente (swap ejes CSS → BD)
+                x_norm = css_top           # ancho tal cual
+                y_norm = css_left          # profundidad tal cual → [0, 50]
+            
+            # ── PASO 2: VINCULAR CON PBP (smart matching) ──
+            # Usar coordenadas ya calculadas para preferir PBP events coherentes
+            # con la posición del tiro (evita cross-linking cuando hay varios
+            # tiros del mismo resultado en el mismo quarter)
             pbp_id = None
+            pbp_action = None
             if p_id:
                 key = (s.quarter, p_id)
                 candidates = pbp_shot_lists.get(key, [])
                 shot_made = s.result == "made"
-                # Buscar match con mismo resultado (made/missed)
+                coord_is_3pt = _is_beyond_3pt_line(x_norm, y_norm)
+                
+                # Primer paso: buscar PBP event con mismo resultado Y tipo coherente
+                best_idx = None
+                fallback_idx = None
                 for i, c in enumerate(candidates):
-                    if c["made"] == shot_made:
-                        pbp_id = c["pbp_id"]
-                        candidates.pop(i)  # Consumir para evitar doble vinculación
-                        linked_count += 1
+                    if c["made"] != shot_made:
+                        continue
+                    c_is_3pt = c["action_type"].startswith("3pt")
+                    if c_is_3pt == coord_is_3pt:
+                        best_idx = i
                         break
+                    elif fallback_idx is None:
+                        fallback_idx = i
+                
+                chosen_idx = best_idx if best_idx is not None else fallback_idx
+                if chosen_idx is not None:
+                    pbp_id = candidates[chosen_idx]["pbp_id"]
+                    pbp_action = candidates[chosen_idx]["action_type"]
+                    candidates.pop(chosen_idx)
+                    linked_count += 1
+                    
+                    # Diagnóstico: reportar si smart matching corrigió un cross-link
+                    if best_idx is not None and fallback_idx is not None and best_idx != fallback_idx:
+                        logger.info(
+                            f"🎯 SMART MATCH: Player #{s.player_number} Q{s.quarter} "
+                            f"coord({x_norm:.1f},{y_norm:.1f}) coord_is_3pt={coord_is_3pt} "
+                            f"→ {pbp_action} (evitó fallback a candidato idx={fallback_idx})"
+                        )
             
-            # ── ROTACIÓN Y NORMALIZACIÓN: convertir horizontal → vertical ──
-            # FEB usa X=largo (0-100), Y=ancho (0-100)
-            # Dashboard usa orientación vertical: canasta arriba, medio campo abajo
-            # Resultado: Y ∈ [0,50], X ∈ [0,100], canasta en (50, ~5.5)
+            if not pbp_id:
+                unlinked_count += 1
             
-            x_orig = s.x_coordinate
-            y_orig = s.y_coordinate
+            # ── PASO 3: Clasificar zona usando PBP + coordenadas normalizadas ──
+            zone = classify_zone_final(x_norm, y_norm, pbp_action)
             
-            if x_orig > 50:
-                # Canasta derecha → rotar y reflejar
-                x_norm = 100 - y_orig
-                y_norm = 100 - x_orig
-            else:
-                # Canasta izquierda → rotar directo
-                x_norm = y_orig
-                y_norm = x_orig
+            if not pbp_id:
+                logger.warning(
+                    f"⚠️ Tiro sin vinculación PBP: Player #{s.player_number}, "
+                    f"Q{s.quarter}, coord({x_norm:.2f}, {y_norm:.2f}) → zona={zone}"
+                )
             
             shots_rows.append({
                 "game_id": game_db_id,
@@ -640,11 +755,19 @@ class SupabaseRepository:
                 "y_coord": y_norm,
                 "made": s.result == "made",
                 "quarter": s.quarter,
-                "zone": s.zone,
+                "zone": zone,
             })
         if shots_rows:
             self._bulk_insert("shots", shots_rows)
-            logger.info(f"Guardados {len(shots_rows)} tiros ({linked_count} vinculados a PBP, rotación vertical aplicada)")
+            logger.info(
+                f"Guardados {len(shots_rows)} tiros "
+                f"({linked_count} vinculados a PBP, {unlinked_count} sin vincular, "
+                f"rotación vertical aplicada)"
+            )
+            # Verificación: contar tiros sin zona
+            no_zone = sum(1 for r in shots_rows if not r.get("zone"))
+            if no_zone > 0:
+                logger.error(f"❌ {no_zone} tiros sin zona asignada — esto no debería ocurrir")
 
         # ── 6. STATS_TEAM_GAMES (COMPLETAS) ──
         # Calcular reb_off, reb_def, blocks_against, fouls_rec desde los player stats

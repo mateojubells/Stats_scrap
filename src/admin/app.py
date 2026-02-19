@@ -24,12 +24,6 @@ sys.path.insert(0, str(root))
 # Load environment variables
 load_dotenv(root / ".env")
 
-from src.shared.database.repository import SupabaseRepository
-
-# Initialize repository
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
 # ═════════════════════════════════════════════════════════════
 # CONFIGURACIÓN
 # ═════════════════════════════════════════════════════════════
@@ -63,40 +57,14 @@ st.markdown("""
 # SESSION STATE & HELPER
 # ═════════════════════════════════════════════════════════════
 
-if "repo" not in st.session_state:
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        st.error("❌ Credenciales de Supabase no configuradas. Configura SUPABASE_URL y SUPABASE_KEY en .env")
-        st.stop()
-    st.session_state.repo = SupabaseRepository(SUPABASE_URL, SUPABASE_KEY)
+from src.admin.session_utils import init_session_state, run_async
 
-def run_async(coro):
-    """Helper para ejecutar coroutines async desde Streamlit (Windows compatible)"""
-    result = [None]
-    exception = [None]
-    
-    def run_in_thread():
-        try:
-            # Configurar policy para Windows (soporta subprocesos)
-            if sys.platform == 'win32':
-                asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-            
-            # Crear nuevo loop en el thread
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result[0] = loop.run_until_complete(coro)
-        except Exception as e:
-            exception[0] = e
-        finally:
-            loop.close()
-    
-    thread = threading.Thread(target=run_in_thread)
-    thread.start()
-    thread.join()
-    
-    if exception[0]:
-        raise exception[0]
-    
-    return result[0]
+# Initialize session state
+init_session_state()
+
+def run_async_wrapper(coro):
+    """Wrapper para compatibilidad con código existente"""
+    return run_async(coro)
 
 # ═════════════════════════════════════════════════════════════
 # SIDEBAR

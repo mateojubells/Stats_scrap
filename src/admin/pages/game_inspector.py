@@ -3,9 +3,9 @@ Game Inspector - Procesar partidos individuales y ver estadísticas
 """
 
 import streamlit as st
-import asyncio
 import pandas as pd
 from datetime import datetime
+from src.admin.session_utils import run_async
 
 def render_game_inspector():
     """Renderiza el inspector de partidos con procesamiento y visualización."""
@@ -111,7 +111,7 @@ def render_game_inspector():
                     
                     from src.shared.scraper.game_scraper import scrape_and_save
                     
-                    result = asyncio.run(scrape_and_save(
+                    result = run_async(scrape_and_save(
                         game_id=game["feb_game_id"],
                         db_game_id=game_id,
                         repository=repo,
@@ -139,7 +139,7 @@ def render_game_inspector():
                     
                     from src.shared.scraper.game_scraper import scrape_and_save
                     
-                    result = asyncio.run(scrape_and_save(
+                    result = run_async(scrape_and_save(
                         game_id=game["feb_game_id"],
                         db_game_id=game_id,
                         repository=repo,

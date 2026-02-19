@@ -10,7 +10,12 @@ from pathlib import Path
 root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(root))
 
+from src.admin.session_utils import init_session_state
 from src.admin.pages.league_manager import render_league_manager
 
 st.set_page_config(page_title="Ligas - BasketStats Admin", page_icon="🏆", layout="wide")
+
+# Initialize session state
+init_session_state()
+
 render_league_manager()

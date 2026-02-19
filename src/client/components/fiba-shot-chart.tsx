@@ -37,6 +37,9 @@ interface ShotDot {
   x: number
   y: number
   made: boolean
+  x_data?: number  // Original data coordinates for tooltip
+  y_data?: number
+  zone?: string
 }
 
 interface FibaShotChartProps {
@@ -284,18 +287,23 @@ export function FibaShotChart({ shots, className = "" }: FibaShotChartProps) {
 
             const filter = shot.made ? "url(#glow-green)" : "url(#glow-red)"
 
+            const tooltipText = `x: ${shot.x_data?.toFixed(2) ?? shot.x.toFixed(2)}, y: ${shot.y_data?.toFixed(2) ?? shot.y.toFixed(2)}${shot.zone ? ` [${shot.zone}]` : ''}`
+
             return (
-              <circle
-                key={idx}
-                cx={svgX}
-                cy={svgY}
-                r={0.8}
-                fill={fill}
-                stroke="rgba(255, 255, 255, 0.4)"
-                strokeWidth={0.25}
-                opacity={0.8}
-                filter={filter}
-              />
+              <g key={idx}>
+                <title>{tooltipText}</title>
+                <circle
+                  cx={svgX}
+                  cy={svgY}
+                  r={0.8}
+                  fill={fill}
+                  stroke="rgba(255, 255, 255, 0.4)"
+                  strokeWidth={0.25}
+                  opacity={0.8}
+                  filter={filter}
+                  style={{ cursor: "pointer" }}
+                />
+              </g>
             )
           })}
         </g>

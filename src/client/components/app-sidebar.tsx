@@ -9,6 +9,7 @@ import {
   Settings,
   Calendar,
   Shield,
+  Tv2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
@@ -17,6 +18,7 @@ const navItems = [
   { label: "Dashboard", href: "/", icon: LayoutDashboard },
   { label: "Equipo", href: "/teams", icon: Shield },
   { label: "Plantilla", href: "/player", icon: Users },
+  { label: "Game Center", href: "/game-center", icon: Tv2 },
   { label: "Scouting", href: "/scouting", icon: Eye },
   { label: "Calendario", href: "/calendar", icon: Calendar },
 ]
