@@ -15,7 +15,8 @@ import {
   ReferenceLine,
   Cell,
 } from "recharts"
-import { TrendingUp, BarChart3 } from "lucide-react"
+import { TrendingUp, BarChart3, TableProperties } from "lucide-react"
+import { Switch } from "@/components/ui/switch"
 import {
   computePlayerAverages,
   getLeaguePlayerBenchmarks,
@@ -90,6 +91,7 @@ export function GeneralTrends({ playerId, teamId, filteredGames }: Props) {
     apg: number
     val: number
   } | null>(null)
+  const [showPerGame, setShowPerGame] = useState(true)
 
   useEffect(() => {
     getLeaguePlayerBenchmarks(teamId).then(({ all }) => {
@@ -124,6 +126,7 @@ export function GeneralTrends({ playerId, teamId, filteredGames }: Props) {
   const avg = computePlayerAverages(filteredGames)
 
   return (
+    <>
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
       {/* ── Performance Chart ── */}
       <div className="lg:col-span-3 rounded-xl border border-border bg-card p-5">
@@ -243,6 +246,123 @@ export function GeneralTrends({ playerId, teamId, filteredGames }: Props) {
           </div>
         </div>
       </div>
+    </div>
+
+    {/* ── Basic Stats Table ── */}
+    {filteredGames.length > 0 && (
+      <div className="mt-6 rounded-xl border border-border bg-card p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <TableProperties className="h-4 w-4 text-primary" />
+            <h3 className="font-display text-base font-bold text-foreground">
+              Estadísticas Básicas
+            </h3>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={`text-xs font-semibold ${!showPerGame ? "text-primary" : "text-muted-foreground"}`}>
+              Acumulado
+            </span>
+            <Switch
+              checked={showPerGame}
+              onCheckedChange={setShowPerGame}
+            />
+            <span className={`text-xs font-semibold ${showPerGame ? "text-primary" : "text-muted-foreground"}`}>
+              Per Game
+            </span>
+          </div>
+        </div>
+
+        <StatsTable games={filteredGames} perGame={showPerGame} />
+      </div>
+    )}
+  </>
+  )
+}
+
+/* ─── Basic Stats Table (NBA/FIBA style) ─── */
+function parseMinutes(min: string | null): number {
+  if (!min) return 0
+  const parts = min.split(":")
+  return parseInt(parts[0] || "0") + parseInt(parts[1] || "0") / 60
+}
+
+function StatsTable({ games, perGame }: { games: GameRow[]; perGame: boolean }) {
+  const n = games.length
+  if (n === 0) return null
+
+  const sum = (fn: (s: GameRow) => number) => games.reduce((a, s) => a + fn(s), 0)
+
+  const totMin = sum((s) => parseMinutes(s.minutes))
+  const totPts = sum((s) => s.points ?? 0)
+  const totReb = sum((s) => s.reb_tot ?? 0)
+  const totAst = sum((s) => s.assists ?? 0)
+  const totStl = sum((s) => s.steals ?? 0)
+  const totBlk = sum((s) => s.blocks_for ?? 0)
+  const totTov = sum((s) => s.turnovers ?? 0)
+  const totFgm = sum((s) => (s.t2_made ?? 0) + (s.t3_made ?? 0))
+  const totFga = sum((s) => (s.t2_att ?? 0) + (s.t3_att ?? 0))
+  const tot3m = sum((s) => s.t3_made ?? 0)
+  const tot3a = sum((s) => s.t3_att ?? 0)
+  const totFtm = sum((s) => s.ft_made ?? 0)
+  const totFta = sum((s) => s.ft_att ?? 0)
+
+  const fgPct = totFga > 0 ? ((totFgm / totFga) * 100).toFixed(1) : "0.0"
+  const t3Pct = tot3a > 0 ? ((tot3m / tot3a) * 100).toFixed(1) : "0.0"
+  const ftPct = totFta > 0 ? ((totFtm / totFta) * 100).toFixed(1) : "0.0"
+
+  const d = perGame ? n : 1
+  const fmt = (v: number) => perGame ? (v / d).toFixed(1) : String(v)
+  const fmtMin = (v: number) =>
+    perGame
+      ? (v / d).toFixed(1)
+      : `${Math.floor(v)}:${String(Math.round((v % 1) * 60)).padStart(2, "0")}`
+
+  const columns: { label: string; value: string; highlight?: boolean }[] = [
+    { label: "GP", value: String(n) },
+    { label: "MIN", value: fmtMin(totMin) },
+    { label: "PTS", value: fmt(totPts), highlight: true },
+    { label: "REB", value: fmt(totReb) },
+    { label: "AST", value: fmt(totAst) },
+    { label: "STL", value: fmt(totStl) },
+    { label: "BLK", value: fmt(totBlk) },
+    { label: "TOV", value: fmt(totTov) },
+    { label: "FG%", value: `${fgPct}%` },
+    { label: "3P%", value: `${t3Pct}%` },
+    { label: "FT%", value: `${ftPct}%` },
+  ]
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[600px] text-xs">
+        <thead>
+          <tr className="border-b border-border">
+            {columns.map((c) => (
+              <th
+                key={c.label}
+                className="px-3 py-2.5 text-center font-semibold uppercase tracking-wider text-muted-foreground"
+              >
+                {c.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <tr className="border-b border-border/50">
+            {columns.map((c) => (
+              <td
+                key={c.label}
+                className={`px-3 py-3 text-center tabular-nums font-semibold ${
+                  c.highlight
+                    ? "text-primary font-bold text-base"
+                    : "text-foreground"
+                }`}
+              >
+                {c.value}
+              </td>
+            ))}
+          </tr>
+        </tbody>
+      </table>
     </div>
   )
 }

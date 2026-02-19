@@ -342,7 +342,9 @@ export function BoxScoreTab({ game, playerStats, teamStats, myTeamId }: BoxScore
           <span>{oppTeamName}</span>
         </div>
         <div className="space-y-4">
-          <CompBar label="Rebotes" myVal={myAgg.reb} oppVal={oppAgg.reb} myName={myTeamName ?? ""} oppName={oppTeamName ?? ""} />
+          <CompBar label="Rebotes Totales" myVal={myAgg.reb} oppVal={oppAgg.reb} myName={myTeamName ?? ""} oppName={oppTeamName ?? ""} />
+          <CompBar label="Rebotes Ofensivos" myVal={myAgg.rebOff} oppVal={oppAgg.rebOff} myName={myTeamName ?? ""} oppName={oppTeamName ?? ""} />
+          <CompBar label="Rebotes Defensivos" myVal={myAgg.rebDef} oppVal={oppAgg.rebDef} myName={myTeamName ?? ""} oppName={oppTeamName ?? ""} />
           <CompBar label="% Tiro de Campo" myVal={Number(myFgPct.toFixed(1))} oppVal={Number(oppFgPct.toFixed(1))} myName={myTeamName ?? ""} oppName={oppTeamName ?? ""} />
           <CompBar label="Pérdidas" myVal={myAgg.to} oppVal={oppAgg.to} myName={myTeamName ?? ""} oppName={oppTeamName ?? ""} higherIsBetter={false} />
           <CompBar label="Asistencias" myVal={myAgg.ast} oppVal={oppAgg.ast} myName={myTeamName ?? ""} oppName={oppTeamName ?? ""} />

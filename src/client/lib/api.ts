@@ -1047,12 +1047,49 @@ export async function getGamesPBP(
   gameIds: number[],
 ): Promise<PlayByPlay[]> {
   if (gameIds.length === 0) return []
-  const { data } = await supabase
-    .from("play_by_play")
-    .select("*")
-    .in("game_id", gameIds)
-    .order("id", { ascending: true })
-  return (data ?? []) as PlayByPlay[]
+
+  // Supabase has a 1000-row default limit; we batch game IDs and paginate
+  const BATCH_SIZE = 50 // game IDs per query
+  const PAGE_SIZE = 10000 // rows per pagination request
+  const allResults: PlayByPlay[] = []
+
+  for (let i = 0; i < gameIds.length; i += BATCH_SIZE) {
+    const batch = gameIds.slice(i, i + BATCH_SIZE)
+
+    let offset = 0
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      try {
+        const { data, error } = await supabase
+          .from("play_by_play")
+          .select("*", { count: "exact" })
+          .in("game_id", batch)
+          .order("id", { ascending: true })
+          .range(offset, offset + PAGE_SIZE - 1)
+
+        if (error) {
+          console.warn(`[getGamesPBP] Error fetching batch ${i}:`, error)
+          break
+        }
+
+        const rows = (data ?? []) as PlayByPlay[]
+        if (!rows || rows.length === 0) break
+
+        allResults.push(...rows)
+
+        // If we got fewer rows than PAGE_SIZE, we've reached the end
+        if (rows.length < PAGE_SIZE) break
+
+        offset += PAGE_SIZE
+      } catch (err) {
+        console.error(`[getGamesPBP] Exception in batch ${i}:`, err)
+        break
+      }
+    }
+  }
+
+  // Final sort by ID to maintain order
+  return allResults.sort((a, b) => a.id - b.id)
 }
 
 /** Get league-wide player averages by position for benchmarking.

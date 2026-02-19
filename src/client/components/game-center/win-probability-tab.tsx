@@ -68,21 +68,44 @@ function buildShadeAreas(
   const areas: { points: string; color: "green" | "red" }[] = []
   if (aug.length < 2) return areas
 
-  let segStart = 0
-  for (let i = 1; i <= aug.length; i++) {
-    const atEnd = i === aug.length
-    const crossPoint = !atEnd && Math.abs(aug[i].homeScore - aug[i].awayScore) < 0.001
-    if (atEnd || crossPoint) {
-      const seg = aug.slice(segStart, i + (atEnd ? 0 : 1))
-      if (seg.length >= 2) {
-        const topPts = seg.map((d) => `${xScale(d.elapsed).toFixed(2)},${yScale(d.homeScore).toFixed(2)}`)
-        const botPts = [...seg].reverse().map((d) => `${xScale(d.elapsed).toFixed(2)},${yScale(d.awayScore).toFixed(2)}`)
-        const midDiff = seg[Math.floor(seg.length / 2)].homeScore - seg[Math.floor(seg.length / 2)].awayScore
-        areas.push({ points: [...topPts, ...botPts].join(" "), color: midDiff >= 0 ? "green" : "red" })
-      }
-      segStart = i
+  // Find indices where lines cross (ties / intersection inserts)
+  const crossIndices: number[] = [0]
+  for (let i = 1; i < aug.length; i++) {
+    if (Math.abs(aug[i].homeScore - aug[i].awayScore) < 0.001) {
+      crossIndices.push(i)
     }
   }
+  crossIndices.push(aug.length - 1)
+
+  // De-duplicate & sort
+  const unique = [...new Set(crossIndices)].sort((a, b) => a - b)
+
+  for (let k = 0; k < unique.length - 1; k++) {
+    const start = unique[k]
+    const end = unique[k + 1]
+    const seg = aug.slice(start, end + 1)
+    if (seg.length < 2) continue
+
+    // Determine which team leads in this segment using mid-point
+    const mid = seg[Math.floor(seg.length / 2)]
+    const homeLead = mid.homeScore >= mid.awayScore
+
+    // Build polygon: trace UPPER line forward, then LOWER line backward
+    const forwardPts = seg.map((d) => {
+      const upper = homeLead ? d.homeScore : d.awayScore
+      return `${xScale(d.elapsed).toFixed(2)},${yScale(upper).toFixed(2)}`
+    })
+    const backwardPts = [...seg].reverse().map((d) => {
+      const lower = homeLead ? d.awayScore : d.homeScore
+      return `${xScale(d.elapsed).toFixed(2)},${yScale(lower).toFixed(2)}`
+    })
+
+    areas.push({
+      points: [...forwardPts, ...backwardPts].join(" "),
+      color: homeLead ? "green" : "red",
+    })
+  }
+
   return areas
 }
 

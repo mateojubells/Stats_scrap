@@ -52,10 +52,12 @@ export function PlayerHeader({
       <div className="flex items-center gap-6">
         {/* Avatar */}
         <div className="relative shrink-0">
-          <div className="flex h-24 w-24 items-center justify-center rounded-full border-2 border-primary/30 bg-secondary text-2xl font-bold text-muted-foreground">
-            {initials}
+          <div className="flex h-24 w-24 items-center justify-center rounded-full border-2 border-primary/30 bg-secondary overflow-hidden">
+            <span className="text-2xl font-bold leading-none text-muted-foreground select-none">
+              {initials}
+            </span>
           </div>
-          <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 rounded-full bg-primary px-2.5 py-0.5 text-xs font-bold text-primary-foreground">
+          <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 rounded-full bg-primary px-2.5 py-0.5 text-xs font-bold text-primary-foreground whitespace-nowrap">
             <Hash className="mr-0.5 inline h-3 w-3" />
             {player.jersey_number ?? "?"}
           </span>

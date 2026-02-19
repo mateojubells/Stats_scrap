@@ -241,28 +241,256 @@ diff = teamValue - leagueAvg
 ## Análisis de Tiro
 
 ### Objetivo
-Visualizar la distribución espacial de los tiros y calcular eficiencias de tiro.
+Visualizar la distribución espacial de los tiros y calcular eficiencias de tiro. Los datos de tiros pasan por un pipeline de transformación complejo que incluye plegado de coordenadas, vinculación inteligente con eventos PBP, y clasificación multidimensional de zonas.
 
 ### Fuente de Datos
-- **Tabla**: `shots`
-- **Campos clave**: `x`, `y`, `zone`, `made`, `team_id`, `player_id`, `quarter`, `game_id`
+- **Tabla**: `shots` (procesada por `repository.save_game_stats`)
+- **Campos key**: `x_coord`, `y_coord`, `zone`, `made`, `team_id`, `player_id`, `quarter`, `game_id`, `pbp_id`, `action_type`
+- **Tabla**: `play_by_play` (para vinculación de tiros y tipos de acción)
 
-### Clasificación de Tiros
+### Pipeline de Procesamiento
+
+#### Paso 1: Extracción de Coordenadas CSS (Backend - `game_scraper.py`)
+
+El scraper extrae tiros del gráfico HTML de FEB:
+
+```html
+<div class="shoot t1 p-11 success0 q-1" style="top: 85.4545%; left: 76.3752%; display: block;"></div>
+```
+
+**Parsing**:
+```python
+# parse_shots() extrae coordenadas CSS directamente
+css_style = "top: 85.4545%; left: 76.3752%"
+y_coordinate = float(top_m.group(1))    # 85.4545 (top)
+x_coordinate = float(left_m.group(1))   # 76.3752 (left)
+
+# ShotData se crea con estos valores RAW (sin transformar):
+ShotData(
+    game_id=game_id,
+    team_id=t_id,
+    player_number=p_no,
+    result=ShotResult.MISSED,
+    quarter=1,
+    x_coordinate=76.3752,      # ← CSS left (largo de cancha, 0-100)
+    y_coordinate=85.4545,      # ← CSS top (ancho de cancha, 0-100)
+    zone=ShotZone.MID_RANGE,   # ← Placeholder temporal
+    raw_style="..."
+)
+```
+
+**Contexto FEB**:
+- Cancha FEB mostrada horizontal completa (100% = 2 mitades)
+- Baskets en ambas esquinas (izquierda y derecha)
+- **left** ∈ [0,100] = largo (basket a basket)
+- **top** ∈ [0,100] = ancho (banda a banda)
+
+#### Paso 2: Plegado de Cancha Completa → Media Cancha (Backend - `repository.py` líneas 676-706)
+
+**Objetivo**: Normalizar todos los tiros a una única mitad de cancha (formato estándar de análisis).
+
+**Regla de transformación**:
+```python
+css_left = s.x_coordinate   # CSS left (posición a lo largo de la cancha)
+css_top = s.y_coordinate    # CSS top (posición a lo ancho de la cancha)
+
+if css_left > 50:
+    # Mitad lejana (derecha) → espejar para plegar sobre media cancha
+    x_norm = 100 - css_top    # ancho espejado: [0, 100] → [100, 0]
+    y_norm = 100 - css_left   # profundidad espejada: [0, 100] → [100, 0]
+else:
+    # Mitad cercana (izquierda) → usar directamente (swap ejes CSS → BD)
+    x_norm = css_top          # ancho tal cual: [0, 100]
+    y_norm = css_left         # profundidad tal cual: [0, 50]
+```
+
+**Resultado**: Coordenadas normalizadas en espacio de media cancha:
+- **x_coord** ∈ [0, 100]: ancho (zona left/center/right)
+- **y_coord** ∈ [0, 50]: profundidad desde línea de fondo (zona baseline/paint/midcourt)
+- **Canasta** en aprox (50, 5.75)
+
+**Ejemplo**:
+```
+CSS: top=85.45%, left=76.38% (mitad derecha, ala)
+left > 50 → espejar
+x_norm = 100 - 85.45 = 14.55
+y_norm = 100 - 76.38 = 23.62
+→ DB: (14.55, 23.62) en media cancha (ala izquierda equivalente)
+```
+
+#### Paso 3: Vinculación Smart PBP-Shot (Backend - `repository.py` líneas 698-735)
+
+**Objetivo**: Asignar cada tiro a su evento PBP correspondiente (`action_type`: 2pt_made, 3pt_missed, etc.), preferiendo coincidencias coherentes con la posición.
+
+**Contexto**: El PBP contiene acciones ultra-específicas extradas del parser pbp_parser.py:
+- **2pt_made**, **2pt_missed**: Tiros dentro del arco
+- **3pt_made**, **3pt_missed**: Tiros desde la línea de triple
+- **ft_made**, **ft_missed**: Tiros libres
+- **dunk_made**: Mates
+
+**Algoritmo simple (OLD)**: Matching greedy FIFO
+```python
+# Problema: Si hay 2+ tiros del mismo resultado en el mismo quarter,
+# se asignan en orden FIFO sin considerar coherencia geográfica
+# → Resultado: cross-linking (tiro de 3pt vinculado a 2pt_made, etc.)
+```
+
+**Algoritmo inteligente (NEW)**: Matriz de coherencia geométrica
+```python
+# PASO 1: Calcular si las coordenadas normalizadas están FUERA de la línea de triple
+def _is_beyond_3pt_line(x: float, y: float) -> bool:
+    """True si coord están fuera/sobre la línea de triple FIBA."""
+    # Esquinas de la línea de triple
+    THREE_CORNER_X_LEFT = 10.26
+    THREE_CORNER_X_RIGHT = 89.90
+    THREE_CORNER_Y_MAX = 12.83
+    
+    # Arco de la línea de triple
+    THREE_ARC_CENTER_X = 50.0
+    THREE_ARC_CENTER_Y = 5.75
+    THREE_ARC_RADIUS = 25.4  # Calibrado para FIBA
+    
+    # Líneas rectas en esquinas
+    if (x <= THREE_CORNER_X_LEFT or x >= THREE_CORNER_X_RIGHT) and y <= THREE_CORNER_Y_MAX:
+        return True
+    
+    # Arco
+    dx = x - THREE_ARC_CENTER_X
+    dy = y - THREE_ARC_CENTER_Y
+    dist = sqrt(dx² + dy²)
+    return dist >= THREE_ARC_RADIUS
+
+# PASO 2: Preferir candidatos PBP coherentes con la posición
+for s in data.shots:
+    # Obtener candidatos (PBP con mismo resultado en mismo quarter)
+    candidates = pbp_shot_lists[(s.quarter, s.player_id)]
+    shot_made = s.result == "made"
+    coord_is_3pt = _is_beyond_3pt_line(x_norm, y_norm)
+    
+    # Buscar match PREFERENTE (mismo resultado + tipo coherente)
+    best_idx = None
+    fallback_idx = None
+    
+    for i, c in enumerate(candidates):
+        if c["made"] != shot_made:
+            continue
+        
+        c_is_3pt = c["action_type"].startswith("3pt")
+        if c_is_3pt == coord_is_3pt:  # ← COHERENTE
+            best_idx = i
+            break  # Tomar el primero coherente
+        elif fallback_idx is None:
+            fallback_idx = i  # Guardar fallback no coherente
+    
+    # Aplicar matching: preferente si existe, sino fallback
+    chosen_idx = best_idx if best_idx is not None else fallback_idx
+    if chosen_idx is not None:
+        pbp_id = candidates[chosen_idx]["pbp_id"]
+        pbp_action = candidates[chosen_idx]["action_type"]
+        candidates.pop(chosen_idx)  # Consumir para evitar doble vinculación
+        
+        # Logging diagnóstico si se evitó un cross-link
+        if best_idx is not None and fallback_idx is not None and best_idx != fallback_idx:
+            logger.info(f"🎯 SMART MATCH: Player #{...} Q{...} "
+                       f"coord({x_norm:.1f},{y_norm:.1f}) → {pbp_action}")
+```
+
+**Resultado**: Cada shot vinculado a un PBP event con `pbp_id` y `action_type` preciso.
+
+#### Paso 4: Clasificación de Zonas Multidimensional (Backend - `repository.py` líneas 618-650)
+
+**Objetivo**: Asignar cada tiro a una zona (`"paint"`, `"mid-range"`, `"3pt"`) usando 2 criterios con prioridad:
+
+```python
+def classify_zone_final(x: float, y: float, pbp_action_type: str = None) -> str:
+    """
+    Clasificación de zona en 3 categorías: 3pt, paint, mid-range.
+    Prioridad:
+      1. PBP action_type (3pt_made/3pt_missed → "3pt")
+      2. Coordenadas: paint → "paint", fuera del arco → "3pt", resto → "mid-range"
+    """
+    # PAINT (rectángulo calibrado)
+    PAINT_X_MIN, PAINT_X_MAX = 33.46, 66.28
+    PAINT_Y_MAX = 19.94
+    
+    # LÍNEA DE TRIPLE (perímetro FIBA calibrado)
+    THREE_ARC_CENTER_X, THREE_ARC_CENTER_Y = 50.0, 5.75
+    THREE_ARC_RADIUS = 25.4
+    THREE_CORNER_X_LEFT = 10.26
+    THREE_CORNER_X_RIGHT = 89.90
+    THREE_CORNER_Y_MAX = 12.83
+    
+    # Paso 1: PBP indica triple → 3pt directamente
+    if pbp_action_type and pbp_action_type.startswith("3pt"):
+        return "3pt"
+    
+    # Paso 2: PBP indica 2pt o dunk → solo paint o mid-range (nunca 3pt)
+    is_confirmed_2pt = pbp_action_type and (pbp_action_type.startswith("2pt") or pbp_action_type.startswith("dunk"))
+    
+    # ¿Está en el PAINT?
+    if PAINT_X_MIN <= x <= PAINT_X_MAX and 0 <= y <= PAINT_Y_MAX:
+        return "paint"
+    
+    # Si PBP confirma 2pt/dunk, es mid-range (no puede ser triple)
+    if is_confirmed_2pt:
+        return "mid-range"
+    
+    # Paso 3: Sin PBP vinculado → usar geometría de línea de triple
+    # Esquinas
+    if (x <= THREE_CORNER_X_LEFT or x >= THREE_CORNER_X_RIGHT) and y <= THREE_CORNER_Y_MAX:
+        return "3pt"
+    
+    # Arco
+    dx = x - THREE_ARC_CENTER_X
+    dy = y - THREE_ARC_CENTER_Y
+    dist = sqrt(dx² + dy²)
+    if dist >= THREE_ARC_RADIUS:
+        return "3pt"
+    
+    # Todo lo demás: mid-range
+    return "mid-range"
+```
+
+**Resultado final en BD (`shots` table)**:
+```json
+{
+  "id": 64877,
+  "game_id": 2774,
+  "pbp_id": 64877,
+  "x_coord": 14.55,
+  "y_coord": 23.62,
+  "made": false,
+  "quarter": 1,
+  "zone": "mid-range",
+  "action_type": "2pt_missed"
+}
+```
+
+### Clasificación de Tiros (Frontend Rendering)
+
+#### Por Zona en BD
+
+El frontend simplemente Lee la columna `zone` de la tabla `shots`:
 
 ```typescript
-// Identificar si un tiro es de 3 puntos:
-isThree = (shot) => {
-  // 1. Por zona (si contiene "3" o "three")
-  if (shot.zone?.includes("3") || shot.zone?.toLowerCase().includes("three"))
-    return true
-  
-  // 2. Por distancia desde el aro (>6.75m en FIBA)
-  const distance = Math.sqrt(shot.x² + shot.y²)
-  return distance > 6.75
-}
+// Identificar si un tiro es de 3 puntos (por zona guardada en BD):
+isThree = (shot: Shot) => shot.zone === "3pt"
+isTwoPointer = (shot: Shot) => shot.zone === "paint" || shot.zone === "mid-range"
 
 twos = shots.filter((s) => !isThree(s))
 threes = shots.filter(isThree)
+```
+
+#### Fallback: Por Distancia (si zona no está disponible)
+
+```typescript
+// Distancia desde la canasta FIBA (50, 5.75) a (100 × 0.15m, 50 × 0.15m)
+const distanceFromBasketM = Math.sqrt(
+  ((shot.x_coord - 50) * 0.15)² + ((shot.y_coord - 5.75) * 0.15)²
+)
+
+// Línea de 3 FIBA = 6.75m
+const isThreeFallback = distanceFromBasketM > 6.75
 ```
 
 ### Métricas Calculadas
@@ -304,11 +532,36 @@ PPS = totalPoints / FGA
 El componente `FibaShotChart` renderiza visualmente:
 - **Círculos verdes**: Tiros anotados (`made = true`)
 - **Círculos rojos**: Tiros fallados (`made = false`)
-- **Tamaño**: Puede variar según frecuencia en zona
+- **Tamaño**: Constante (~0.8 en SVG), no varía por densidad
+
+**Transformación de coordenadas BD → SVG**:
+```typescript
+// BD: x ∈ [0,100], y ∈ [0,50], basket en (50, 5.75)
+// SVG: viewBox="0 0 100 94" (FIBA 15m × 14.1m), basket en (50, 88.25)
+
+toSvgX = (bdX: number) => bdX                    // Direct mapping [0,100] → [0,100]
+toSvgY = (bdY: number) => 94 - (bdY * 1.88)     // Inverted: [0,50] → [94,0], factor 94/50=1.88
+```
+
+**Colorización por zona**:
+- Zona PAINT: círculos **menores brillo**
+- Zona MID-RANGE: círculos **brillo medio**
+- Zona 3PT: círculos **máximo brillo**
 
 **Filtros**:
 - Por cuarto (Q1, Q2, Q3, Q4, o Todos)
+- Por equipo (Todos, Home, Away)
 - Las coordenadas X/Y se escalan a la cancha FIBA reglamentaria
+
+### Limitaciones y Consideraciones
+
+1. **Cross-linking previo**: Partidos procesados ANTES de la implementación del smart matching pueden tener vinculaciones incorrectas. Requieren **re-procesamiento**.
+
+2. **Ventana de búsqueda PBP**: ±3 eventos. Si hay muchos eventos intermedios, podría no encontrar el shot correspondiente.
+
+3. **Precisión de coordenadas CSS**: La precisión depende de la calidad del HTML/JS de FEB. Zonas muy exactas no son garantizadas.
+
+4. **Player ID mismatches**: Si el scraper no extrae correctamente el `feb_player_id` del URL Jugador.aspx, el shot puede no vincularse a un player válido.
 
 ---
 
@@ -1099,51 +1352,66 @@ function classifyAction(actionType: string): PbpFilter[] {
 ## Pestaña 6: Shot Chart del Partido
 
 ### Objetivo
-Visualizar todos los tiros del partido en la cancha FIBA, con estadísticas de eficiencia.
+Visualizar todos los tiros del partido en la cancha FIBA (reglamentaria), con estadísticas de eficiencia segregadas por zona. Los datos ya vienen preprocesados desde el backend (transformación de coordenadas, vinculación PBP, clasificación de zonas).
 
 ### Datos de Entrada
-**Tabla `shots`**: 
-- `x_coord`, `y_coord`: Coordenadas (escala [0,100] × [0,50])
-- `made`: boolean
+
+**Tabla `shots`** (preprocesada por `repository.save_game_stats`):
+- `x_coord`, `y_coord`: Coordenadas normalizadas a media cancha (post-plegado)
+  - x ∈ [0, 100]: ancho (left/center/right)
+  - y ∈ [0, 50]: profundidad desde línea de fondo
+- `zone`: Clasificación de zona (`"paint"`, `"mid-range"`, `"3pt"`) — ya calculada en backend
+- `made`: boolean (true = tiro anotado)
 - `quarter`: número de cuarto
 - `team_id`, `player_id`: Identificadores
+- `pbp_id`, `action_type`: Vinculación a evento PBP (para validación)
 
-### Clasificación de Tiros
+### Clasificación de Tiros (Frontend - Lectura Directa)
 
-**Identificar si es triple**:
+El frontend simplemente **lee** la columna `zone` de la BD, previamente calculada por el backend:
+
 ```typescript
-const isThree = (s: Shot) => {
-  // 1. Por zona (si contiene "3")
-  if (s.zone?.includes("3") || s.zone?.toLowerCase().includes("three")) 
-    return true
-  
-  // 2. Por distancia desde el aro en metros
-  // Basket está en (50, 5.75) en coordenadas normalizadas
-  // 1 unidad de coordenada = 0.15 metros (100 unidades = 15m de cancha)
-  const dx = (s.x_coord - 50) * 0.15
-  const dy = (s.y_coord - 5.75) * 0.15
-  const dist = Math.sqrt(dx * dx + dy * dy)
-  
-  // Línea de 3 FIBA = 6.75m
-  return dist > 6.75
-}
+const isThree = (s: Shot) => s.zone === "3pt"
+const isInPaint = (s: Shot) => s.zone === "paint"
+const isMidRange = (s: Shot) => s.zone === "mid-range"
 
-const twos = shots.filter((s) => !isThree(s))
 const threes = shots.filter(isThree)
+const twos = shots.filter((s) => !isThree(s))  // paint + mid-range
+```
+
+**Fallback (si zona es null/undefined)**:
+```typescript
+// Distancia desde canasta (50, 5.75)
+// Escala: 1 unidad = 0.15 metros (100 unidades = 15m, FIBA)
+const distanceFromBasketM = Math.sqrt(
+  ((shot.x_coord - 50) * 0.15)² + ((shot.y_coord - 5.75) * 0.15)²
+)
+const isThreeFallback = distanceFromBasketM > 6.75  // FIBA 3-pt line
 ```
 
 ### Cálculos de Eficiencia por Filtro
 
-**Para cada filtro (todos, solo equipo, solo rival)**:
+**Filtros disponibles**:
+- `all`: Todos los tiros (ambos equipos)
+- `home`: Solo tiros del equipo local
+- `away`: Solo tiros del equipo visitante
+
+**Para cada filtro**:
 
 ```typescript
 const calcStats = (shotSet: Shot[]) => {
   if (shotSet.length === 0) return defaultEmptyStats
   
-  const t2m = twos.filter((s) => s.made).length
-  const t2a = twos.length
-  const t3m = threes.filter((s) => s.made).length
-  const t3a = threes.length
+  // Separar por zona (ya categorizado en BD)
+  const paintShots = shotSet.filter((s) => s.zone === "paint")
+  const midRangeShots = shotSet.filter((s) => s.zone === "mid-range")
+  const threeShots = shotSet.filter((s) => s.zone === "3pt")
+  
+  // Diferenciar made/missed
+  const t2m = paintShots.filter((s) => s.made).length + midRangeShots.filter((s) => s.made).length
+  const t2a = paintShots.length + midRangeShots.length
+  const t3m = threeShots.filter((s) => s.made).length
+  const t3a = threeShots.length
   const fgm = t2m + t3m
   const fga = t2a + t3a
 
@@ -1191,19 +1459,36 @@ PPS ≥ 1.4 → 70% eFG% (elite)
 ### Visualización
 
 **Componente reutilizable**: `FibaShotChart` (existente)
-- Cancha FIBA geometricamente precisa (15m × 14.1m)
-- Puntos verdes: tiros anotados
-- Puntos rojos: tiros fallados
+- Cancha FIBA geometricamente precisa (15m × 14.1m, viewBox="0 0 100 94")
+- Puntos verdes: tiros anotados (`made = true`)
+- Puntos rojos: tiros fallados (`made = false`)
 - Tamaño consistente (~0.8 radio en SVG)
+
+**Transformación de coordenadas BD → SVG**:
+```typescript
+// BD: x ∈ [0,100] (ancho), y ∈ [0,50] (profundidad), basket en (50, 5.75)
+// SVG: viewBox="0 0 100 94" (FIBA 15m × 14.1m), basket en (50, 88.25)
+
+toSvgX = (bdX: number) => bdX                    // Direct mapping [0,100] → [0,100]
+toSvgY = (bdY: number) => 94 - (bdY * 1.88)     // Inverted + scaled: [0,50] → [94,0], factor 94/50=1.88
+```
 
 **Filtros de vista**:
 ```typescript
-type ShotFilter = "all" | "my" | "opp"
+type ShotFilter = "all" | "home" | "away"
 
-// my: shots.filter((s) => s.team_id === myTeamId)
-// opp: shots.filter((s) => s.team_id === oppTeamId)
-// all: todos los shots
+// home: shots.filter((s) => s.team_id === homeTeamId)
+// away: shots.filter((s) => s.team_id === awayTeamId)
+// all: todos los shots del partido
 ```
+
+**Tabla de estadísticas**:
+- Mostrada bajo el gráfico de tiros
+- Comparativa lado a lado: Home vs Away
+- Métricas: FG%, T2%, T3%, eFG%, PPS
+- Color de fondo: Verde si mejor que rival, rojo si peor
+
+**Implementación**: `components/game-center/game-shot-chart-tab.tsx` líneas 40-185
 
 **Tabla de estadísticas**:
 - FG%, T2%, T3%, eFG%, PPS mostrados para el filtro actual
@@ -1278,13 +1563,21 @@ type ShotFilter = "all" | "my" | "opp"
    - No contabiliza tiros libres como puntos en racha
 
 3. **Shot Chart Tab**:
-   - Clasificación de triples por distancia es aproximada
-   - No diferencia "assisted" vs "unassisted"
-   - No colorea por zona o densidad
+   - **Partidos procesados antes de Febrero 2026**: Pueden tener vinculaciones PBP-Shot incorrectas (cross-linking de tiros de 3pt con eventos PBP de 2pt y viceversa). Requieren **re-procesamiento** para corregir automáticamente.
+   - **Smart matching**: Aunque el algoritmo actual prefiere coherencia geométrica, muy ocasionalmente puede fallar si el PBP tiene errores de entrada.
+   - **Ventana de búsqueda**: ±3 eventos PBP. Si hay muchos eventos intermedios, puede no encontrar vinculación.
+   - **Precisión de coordenadas**: Las coordenadas CSS de FEB no son 100% precisas; zonas muy exactas no son garantizadas.
+   - No diferencia "assisted" vs "unassisted" (información no disponible en FEB)
+   - No colorea por densidad (heatmap) — solo muestra puntos individuales
 
 4. **Play-by-Play Tab**:
    - Ventana de búsqueda de assists es ±3 eventos (puede perder relaciones lejanas)
    - Algunos action_type pueden no estar mapeados correctamente si el scraper varía
+
+5. **Pipeline General de Shots**:
+   - Depende de la calidad del HTML/CSS de FEB (cambios en estructura requieren actualización del scraper)
+   - Requiere datos completos de PBP para vinculación correcta
+   - Si hay inyección de agua/cortes de servidor durante scraping, datos pueden estar incompletos
 
 ---
 
@@ -1295,10 +1588,16 @@ type ShotFilter = "all" | "my" | "opp"
 - **eFG%**: Métrica estándar introducida por John Hollinger
 - **Flow Chart**: Inspirado en ESPN's Win Expectancy charts, pero usando diferencia de puntos bruta
 - **Win Probability**: Las versiones NBA usan modelos ML; aquí es visualización pura de datos
+- **Coordinate Transformation**: Algoritmo de plegado de cancha completa a media cancha, calibrado para geometría FIBA
+- **Smart PBP-Shot Linking**: Algoritmo de vinculación inteligente que prioriza coherencia geométrica sobre matching greedy
 
 ---
 
-**Última actualización**: Febrero 2026  
-**Versión**: 1.1  
-**Cambios recientes**: Adición de Game Center (6 pestañas) con cálculos de Box Score, Four Factors, Score Flow, Scoring Runs, Play-by-Play y Shot Chart
+**Última actualización**: Febrero 19, 2026  
+**Versión**: 1.2  
+**Cambios recientes**: 
+- Implementación completa del pipeline de transformación de coordenadas de shots (plegado CSS → coordenadas BD)
+- Smart PBP-shot linking con prioridad geométrica (evita cross-linking de 2pt ↔ 3pt)
+- Clasificación multidimensional de zonas (zona PBP + geometría de línea de triple)
+- Documentación extendida de todo el pipeline de shots (Análisis de Tiro)
 
