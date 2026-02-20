@@ -65,10 +65,18 @@ function detectScoringRuns(
     return "?"
   }
 
-  // Filter to scoring events only
-  const scoringEvents = pbp.filter(
-    (ev) => ev.action_value > 0 && ev.action_type?.includes("made") && ev.team_id != null,
-  )
+  // Filter to scoring events only and enforce chronological order
+  const scoringEvents = pbp
+    .filter(
+      (ev) =>
+        ev.action_value > 0 &&
+        ev.action_type?.includes("made") &&
+        (ev.team_id === homeId || ev.team_id === awayId),
+    )
+    .sort((a, b) => {
+      if (a.id != null && b.id != null && a.id !== b.id) return a.id - b.id
+      return elapsedMinutes(a.quarter, a.minute) - elapsedMinutes(b.quarter, b.minute)
+    })
 
   if (scoringEvents.length === 0) return []
 
@@ -83,8 +91,9 @@ function detectScoringRuns(
   let awayScore = 0
   let runStartQuarter = 1
   let runStartMinute: string | null = null
+  let runEndMinute: string | null = null
 
-  const flushRun = (endMinute: string | null) => {
+  const flushRun = () => {
     if (currentTeamId != null && runPoints >= minRunPoints) {
       runs.push({
         teamId: currentTeamId,
@@ -94,7 +103,7 @@ function detectScoringRuns(
         endScore: `${homeScore}-${awayScore}`,
         quarter: runStartQuarter,
         startMinute: runStartMinute,
-        endMinute,
+        endMinute: runEndMinute,
         events: [...runEvents],
       })
     }
@@ -103,25 +112,33 @@ function detectScoringRuns(
   for (const ev of scoringEvents) {
     const scoringTeamId = ev.team_id!
 
+    const prevHome = homeScore
+    const prevAway = awayScore
+
+    if (ev.home_score_partial != null || ev.away_score_partial != null) {
+      homeScore = ev.home_score_partial ?? (scoringTeamId === homeId ? prevHome + ev.action_value : prevHome)
+      awayScore = ev.away_score_partial ?? (scoringTeamId === awayId ? prevAway + ev.action_value : prevAway)
+    } else {
+      if (scoringTeamId === homeId) homeScore += ev.action_value
+      if (scoringTeamId === awayId) awayScore += ev.action_value
+    }
+
     if (scoringTeamId !== currentTeamId) {
-      // The other team scored → end current run
-      flushRun(ev.minute)
+      // Rival scored: cortar racha actual inmediatamente
+      flushRun()
 
       // Start new run
       currentTeamId = scoringTeamId
       runPoints = 0
       runEvents = []
-      runStartHomeScore = homeScore
-      runStartAwayScore = awayScore
+      runStartHomeScore = prevHome
+      runStartAwayScore = prevAway
       runStartQuarter = ev.quarter
       runStartMinute = ev.minute
     }
 
-    // Accumulate score
-    if (scoringTeamId === homeId) homeScore += ev.action_value
-    else awayScore += ev.action_value
-
     runPoints += ev.action_value
+    runEndMinute = ev.minute
     runEvents.push({
       playerId: ev.player_id,
       playerName: ev.player_id ? (playerMap.get(ev.player_id) ?? `#${ev.player_id}`) : "—",
@@ -132,7 +149,7 @@ function detectScoringRuns(
   }
 
   // Flush last run
-  flushRun(scoringEvents[scoringEvents.length - 1]?.minute ?? null)
+  flushRun()
 
   // Sort by points descending
   runs.sort((a, b) => b.points - a.points)

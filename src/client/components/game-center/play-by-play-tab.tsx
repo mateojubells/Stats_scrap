@@ -69,8 +69,22 @@ export function PlayByPlayTab({ game, pbp, myTeamId }: PlayByPlayTabProps) {
   const [filter, setFilter] = useState<PbpFilter>("all")
   const [quarterFilter, setQuarterFilter] = useState<number | null>(null)
 
+  const orderedPbp = useMemo(() => {
+    const elapsed = (quarter: number, minute: string | null) => {
+      const [mRaw, sRaw] = (minute ?? "0:00").split(":")
+      const m = Number.parseInt(mRaw || "0", 10)
+      const s = Number.parseInt(sRaw || "0", 10)
+      return (quarter - 1) * 600 + (600 - (m * 60 + s))
+    }
+
+    return [...pbp].sort((a, b) => {
+      if (a.id != null && b.id != null && a.id !== b.id) return a.id - b.id
+      return elapsed(a.quarter, a.minute) - elapsed(b.quarter, b.minute)
+    })
+  }, [pbp])
+
   const filteredPbp = useMemo(() => {
-    let events = pbp
+    let events = orderedPbp
 
     // Quarter filter
     if (quarterFilter) {
@@ -83,13 +97,13 @@ export function PlayByPlayTab({ game, pbp, myTeamId }: PlayByPlayTabProps) {
     }
 
     return events
-  }, [pbp, filter, quarterFilter])
+  }, [orderedPbp, filter, quarterFilter])
 
   // Find unique quarters in the PBP data
   const quarters = useMemo(() => {
-    const qs = new Set(pbp.map((ev) => ev.quarter))
+    const qs = new Set(orderedPbp.map((ev) => ev.quarter))
     return Array.from(qs).sort((a, b) => a - b)
-  }, [pbp])
+  }, [orderedPbp])
 
   return (
     <div className="space-y-4">

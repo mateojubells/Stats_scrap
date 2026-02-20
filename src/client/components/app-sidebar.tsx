@@ -10,6 +10,7 @@ import {
   Calendar,
   Shield,
   Tv2,
+  Sparkles,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
@@ -21,6 +22,7 @@ const navItems = [
   { label: "Game Center", href: "/game-center", icon: Tv2 },
   { label: "Scouting", href: "/scouting", icon: Eye },
   { label: "Calendario", href: "/calendar", icon: Calendar },
+  { label: "HoopsAI Chat", href: "/chat", icon: Sparkles },
 ]
 
 export function AppSidebar() {

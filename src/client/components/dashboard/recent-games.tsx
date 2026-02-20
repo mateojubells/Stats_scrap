@@ -5,6 +5,7 @@ import { useEffect, useState } from "react"
 import { getTeamGames } from "@/lib/api"
 import type { Game } from "@/lib/types"
 import { BarChart3, ArrowRight } from "lucide-react"
+import Link from "next/link"
 
 interface Row {
   status: "WIN" | "LOSS"
@@ -55,10 +56,10 @@ export function RecentGames() {
         <h2 className="font-display text-lg font-bold text-foreground">
           Últimos Partidos
         </h2>
-        <button className="flex items-center gap-1 text-xs font-semibold text-primary hover:underline">
+        <Link href="/calendar" className="flex items-center gap-1 text-xs font-semibold text-primary hover:underline">
           Ver calendario
           <ArrowRight className="h-3 w-3" />
-        </button>
+        </Link>
       </div>
       <div className="mt-4 overflow-x-auto">
         <table className="w-full text-sm">

@@ -116,9 +116,13 @@ export async function getTeamSeasonAverages(teamId: number) {
   const sum = (key: keyof StatsTeamGame) =>
     data.reduce((a, r) => a + ((r[key] as number) || 0), 0)
 
+  const totalPoints = sum("points")
+  const computedPoints = sum("t2_made") * 2 + sum("t3_made") * 3 + sum("ft_made")
+  const safeTotalPoints = totalPoints > 0 ? totalPoints : computedPoints
+
   return {
     gamesPlayed: n,
-    ppg: ((sum("fg_made") * 2 + sum("t3_made") + sum("ft_made")) / n).toFixed(1),
+    ppg: (safeTotalPoints / n).toFixed(1),
     rpg: (sum("reb_tot") / n).toFixed(1),
     apg: (sum("assists") / n).toFixed(1),
     fgPct: sum("fg_att") > 0 ? ((sum("fg_made") / sum("fg_att")) * 100).toFixed(1) : "0",
@@ -431,9 +435,10 @@ export async function getTeamAdvancedStats(teamId: number) {
   const ftMade = sum("ft_made")
   const ftAtt = sum("ft_att")
   
-  // PPG: Usar puntos totales del box score para mayor precisión
+  // PPG: priorizar puntos de tabla; fallback por tiros anotados para robustez
   const totalPoints = sum("points")
-  const ppg = (totalPoints / n).toFixed(1)
+  const computedPoints = sum("t2_made") * 2 + t3Made * 3 + ftMade
+  const safeTotalPoints = totalPoints > 0 ? totalPoints : computedPoints
   
   // eFG% = (FGM + 0.5 * 3PM) / FGA
   // CRÍTICO: FGA es el denominador correcto (total intentados, no solo anotados)
@@ -443,11 +448,11 @@ export async function getTeamAdvancedStats(teamId: number) {
   // FG Missed = FGA - FGM (correctamente calculado)
   const fgMissed = fgAtt - fgMade
   const ftMissed = ftAtt - ftMade
-  const eff = ((totalPoints + sum("reb_tot") + sum("assists") + sum("steals") + sum("blocks_for")) - (fgMissed + ftMissed + sum("turnovers"))) / n
+  const eff = ((safeTotalPoints + sum("reb_tot") + sum("assists") + sum("steals") + sum("blocks_for")) - (fgMissed + ftMissed + sum("turnovers"))) / n
 
   return {
     gamesPlayed: n,
-    ppg,
+    ppg: (safeTotalPoints / n).toFixed(1),
     rpg: (sum("reb_tot") / n).toFixed(1),
     apg: (sum("assists") / n).toFixed(1),
     efg,
@@ -483,14 +488,16 @@ export async function getTeamRecentStats(teamId: number, lastN = 3) {
   const ftAtt = sum("ft_att")
   
   const totalPoints = sum("points")
-  const ppg = (totalPoints / n).toFixed(1)
+  const computedPoints = sum("t2_made") * 2 + t3Made * 3 + ftMade
+  const safeTotalPoints = totalPoints > 0 ? totalPoints : computedPoints
+  const ppg = (safeTotalPoints / n).toFixed(1)
   
   // eFG% = (FGM + 0.5 * 3PM) / FGA
   const efg = fgAtt > 0 ? (((fgMade + 0.5 * t3Made) / fgAtt) * 100).toFixed(1) : "0"
   
   const fgMissed = fgAtt - fgMade
   const ftMissed = ftAtt - ftMade
-  const eff = ((totalPoints + sum("reb_tot") + sum("assists") + sum("steals") + sum("blocks_for")) - (fgMissed + ftMissed + sum("turnovers"))) / n
+  const eff = ((safeTotalPoints + sum("reb_tot") + sum("assists") + sum("steals") + sum("blocks_for")) - (fgMissed + ftMissed + sum("turnovers"))) / n
 
   return {
     ppg,

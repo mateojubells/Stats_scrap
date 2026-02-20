@@ -49,7 +49,7 @@ export default function DashboardPage() {
       setStats([
         {
           label: "PPG",
-          value: season.ppg,
+          value: season.ppg ?? "0.0",
           change: ppgTrend.change,
           isPositive: ppgTrend.isPositive,
           context: `Últimos 3: ${recent?.ppg ?? "—"}`,
