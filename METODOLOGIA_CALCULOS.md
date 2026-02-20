@@ -6,6 +6,7 @@
 3. [Estadísticas Avanzadas (Four Factors)](#estadísticas-avanzadas-four-factors)
 4. [Análisis de Tiro](#análisis-de-tiro)
 5. [Benchmarking vs Liga](#benchmarking-vs-liga)
+6. [Análisis de Scouting (Módulo Rival)](#análisis-de-scouting-módulo-rival)
 
 ---
 
@@ -1581,6 +1582,511 @@ type ShotFilter = "all" | "home" | "away"
 
 ---
 
+## Análisis de Scouting (Módulo Rival)
+
+### Objetivo General
+El módulo de Scouting proporciona análisis táctico profundo de equipos rivales mediante tres pestañas integradas: dossier individual de jugadores, estadísticas de tiro del equipo, y análisis de sinergia. Los cálculos combaten datos en tiempo real de alineaciones, desgloses de puntos por situación, y redes de asistencias.
+
+### 1. eFG% por Zona (Effective Field Goal % by Zone)
+
+#### Objetivo
+Evaluar la eficiencia de tiro de un jugador/equipo rival segregada por ubicación en la cancha, permitiendo identificar fortalezas y debilidades geográficas.
+
+#### Algoritmo
+
+**Paso 1: Filtrar tiros por zona**
+```typescript
+const shotsByZone = (shots: Shot[], zone: "paint" | "mid-range" | "3pt") =>
+  shots.filter(s => s.zone === zone)
+```
+
+Zonas disponibles:
+- **paint**: Área bajo el aro (rectángulo FIBA ~19.94m de profundidad)
+- **mid-range**: Entre paint y línea de triple (~12-25m del aro)
+- **3pt**: Allá de la línea de triple (>25.4m, radio FIBA)
+
+**Paso 2: Calcular eFG% por zona**
+```typescript
+const calcEfgByZone = (shots: Shot[]) => {
+  const attempts = shots.length
+  if (attempts === 0) return { efg: 0, attempts: 0, makes: 0 }
+  
+  // Contar tiros de 2 y 3 que entraron
+  let weightedMakes = 0
+  let totalMakes = 0
+  
+  for (const shot of shots) {
+    if (!shot.made) continue
+    
+    totalMakes++
+    
+    // Ponderar: tiros de 3 valen 1.5x en eFG
+    const isThree = shot.zone === "3pt"
+    const weight = isThree ? 1.5 : 1.0
+    weightedMakes += weight
+  }
+  
+  // eFG% = (Tiros_anotados + 0.5 × Triples) / Intentos
+  // Equivalentemente: (Anotaciones_ponderadas) / Intentos × 100
+  const efg = (weightedMakes / attempts) * 100
+  
+  return {
+    efg: efg.toFixed(1),
+    attempts,
+    makes: totalMakes
+  }
+}
+```
+
+#### Ejemplo Práctico
+
+**Jugador: Rival del paint (10 intentos)**
+```
+Paint - 4 anotados de 10 intentos
+2PT zone → weighted: 4 × 1.0 = 4
+eFG% = (4 / 10) × 100 = 40%
+```
+
+**Mismo jugador en triple (6 intentos)**
+```
+3PT zone - 3 anotados de 6 intentos
+3PT zone → weighted: 3 × 1.5 = 4.5
+eFG% = (4.5 / 6) × 100 = 75%
+```
+
+#### Interpretación
+
+| eFG% por Zona | Interpretación |
+|---|---|
+| <30% | Muy ineficiente en esa zona |
+| 30-40% | Bajo (defender normalmente) |
+| 40-50% | Promedio (monitorear) |
+| 50-60% | Bueno (cuidado especial) |
+| >60% | Excelente (doble cobertura si es posible) |
+
+#### Visualización
+
+En `individual-reports-tab.tsx`:
+- **Panel lateral** mostrando eFG% por zona (paint, mid-range, 3pt)
+- **Código de colores opcional**: Rojo (<40%), Amarillo (40-50%), Verde (>50%)
+- Números grandes y legibles para lectura rápida durante análisis
+
+**Ubicación en BD**: Se calcula on-the-fly del frontend leyendo `shots` filtrada por `game_ids` y `player_id`
+
+---
+
+### 2. Detección de DNP (Did Not Play)
+
+#### Objetivo
+Identificar jugadores del equipo rival que no han jugado en los últimos 3 partidos, permitiendo alertas sobre posibles lesiones o decisiones tácticas.
+
+#### Algoritmo
+
+**Paso 1: Obtener últimos 3 game_ids del equipo rival**
+```typescript
+const recentGames = sortedGames.slice(0, 3)  // Últimos 3 partidos
+const recentGameIds = new Set(recentGames.map(g => g.id))
+```
+
+**Paso 2: Filtrar jugadores que NO aparecen en esos games**
+```typescript
+const inactivePlayerIds = useMemo(() => {
+  const ids = new Set<number>()
+  
+  for (const profile of allPlayers) {
+    const player = profile.player
+    
+    // Buscar si el jugador aparece en alguno de los últimos 3 games
+    const playedRecent = profile.rows.some(
+      row => recentGameIds.has(row.game_id)
+    )
+    
+    // Si NO aparece en ninguno → está inactivo
+    if (!playedRecent) {
+      ids.add(player.id)
+    }
+  }
+  
+  return ids
+}, [allPlayers, recentGameIds])
+```
+
+**Paso 3: Mostrar alerta global**
+```typescript
+if (inactivePlayerIds.size > 0) {
+  return (
+    <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-4">
+      <div className="flex gap-2 items-center text-sm text-amber-700">
+        <AlertCircle className="w-4 h-4" />
+        <span>
+          {inactivePlayerIds.size} jugador(es) sin participación en últimos 3 partidos
+        </span>
+      </div>
+    </div>
+  )
+}
+```
+
+#### Fuente de Datos
+
+- **Tabla `stats_player_games`**: Cada fila = participación de jugador en un partido
+- Filtrado por `team_id` = equipo rival y `game_id` ∈ últimos 3 games
+- Si un jugador NO tiene fila para esos games → DNP
+
+#### Interpretación
+
+| Escenario | Acción |
+|---|---|
+| DNP + Star player | ⚠️ Probable lesión; revisar lesionados |
+| DNP + Role player | Puede ser decisión táctica (rotación) |
+| DNP de 3+ games | Lesión confirmada o baja del equipo |
+
+#### Limitaciones
+
+- No diferencia si es lesión vs. decisión técnica vs. castigo disciplinario
+- Requiere datos completos de `stats_player_games` en todos los partidos
+- No funciona para primeros partidos de la temporada (menos de 3 games previos)
+
+---
+
+### 3. Análisis de Transición (Transition Danger)
+
+#### Objetivo
+Cuantificar qué porcentaje de los puntos del equipo rival provienen de situaciones de transición rápida (después de turnovers nuestros), permitiendo identificar si debemos mejorar transición defensiva.
+
+#### Definición de "Puntos de Transición"
+
+En el desglose de puntos del equipo rival (`getTeamScoringBreakdown`), los puntos se categorizan en:
+
+1. **Juego Regular**: Posesiones normales de ataque posicional
+2. **Off Turnover**: Puntos inmediatos después de nuestro turnover
+3. **Second Chance**: Puntos tras rebote ofensivo del rival
+4. **Fastbreak**: Puntos anotados en <8 segundos desde posesión ganada
+
+**Transition Danger = (Off Turnover + Fastbreak) / Total Puntos × 100**
+
+#### Algoritmo
+
+**Paso 1: Cargar y clasificar eventos del PBP**
+```typescript
+// En api.ts → getTeamScoringBreakdown()
+// Buscar en el PBP eventos de "made" (canastas) para el equipo
+for (let i = 0; i < pbp.length; i++) {
+  const ev = pbp[i]
+  if (ev.action_value && ev.action_value > 0 && ev.action_type?.includes("made")) {
+    totalPoints += ev.action_value
+```
+
+**Paso 2: Detectar contexto de cada canasta (ventana ±2 eventos)**
+```typescript
+// Buscar INMEDIATAMENTE antes: si la canasta fue precedida por turno/robo/reb_off
+// Ventana: ±2 eventos máximo (más restrictivo, sin pases registrados)
+let foundTurnover = false
+let foundOffReb = false
+let foundSteal = false
+
+for (let j = Math.max(0, i - 2); j < i; j++) {
+  if (pbp[j].action_type === "turnover") foundTurnover = true
+  if (pbp[j].action_type === "steal") foundSteal = true
+  if (pbp[j].action_type === "reb_off") foundOffReb = true
+}
+```
+
+**Paso 3: Clasificar la canasta**
+```typescript
+if (foundOffReb) {
+  secondChance += ev.action_value        // Segunda oportunidad
+} else if (foundTurnover || foundSteal) {
+  offTurnover += ev.action_value        // Off turnover (transición)
+}
+// Si no hay contexto especial → contaría como "regular" al final
+```
+
+**Paso 4: Estimar fastbreak**
+```typescript
+// Fastbreak: 3% de los puntos totales (estimación conservadora)
+// Nota: Sin datos de tiempo de posesión real, es imposible calcular con precisión
+fastbreak = Math.round(totalPoints * 0.03)
+```
+
+**Paso 5: Calcular componentes**
+```typescript
+const regular = totalPoints - offTurnover - secondChance - fastbreak
+```
+
+**Frontend** (`shooting-analytics-tab.tsx`):
+```typescript
+// Transición Danger = (offTurnover + fastbreak) / total × 100
+const transitionPoints = scoringBreakdown.offTurnover + scoringBreakdown.fastbreak
+const pct = total > 0 ? (transitionPoints / total) * 100 : 0
+```
+
+#### Interpretación
+
+| Transición Danger | Significado | Acción |
+|---|---|---|
+| <20% | Bajo riesgo de transición | Defensa normal |
+| 20-30% | Riesgo moderado | Mejorar transición D, reduce TOs |
+| 30-40% | Riesgo alto | Defensa de transición crítica |
+| >40% | Muy peligroso | Prioridad máxima: reducir turnovers |
+
+#### Ejemplo
+
+**Rival anotó 80 puntos en el partido:**
+```
+Off Turnover:  12 pts
+Fastbreak:     15 pts
+Transición Total: 27 pts
+
+Transición Danger = (12 + 15) / 80 × 100 = 33.75%
+```
+
+**Recomendación táctica**: El rival es peligroso en transición. Nuestro equipo debe:
+- Minimizar turnovers (TOs → Off Turnover)
+- Mejorar defensa de primera línea (prevenir fastbreaks)
+- Si perdemos posesión, volver a defensa rápidamente
+
+#### Limitaciones
+
+- Depende de clasificación correcta de eventos en el PBP
+- "Off Turnover" requiere vinculación PBP: turnover/steal → basket inmediato (ventana ±2 eventos: MÁS restrictivo)
+- "Fastbreak" se estima como **3% de puntos totales** (conservador, ya que no tenemos datos de tiempo real de posesión)
+- **FIX (Feb 20 2026 v1.3.2)**: Ventana reducida de ±5 → ±2 eventos. Ahora SOLO se detectan transiciones "verdaderas" sin eventos intermedios que rompan la conexión
+- **FIX (Feb 20 2026 v1.3.1)**: Antes se calculaba fastbreak como 8% (demasiado alto), ahora 3% para mayor precisión
+- **FIX (Feb 20 2026 v1.3.1)**: El frontend ahora suma correctamente `(offTurnover + fastbreak) / total` en lugar de solo `offTurnover / total`
+- No diferencia "buena" transición (robo) vs "mala" (turnover nuestro); ambas se contabilizan igual
+- Con ventana pequeña (±2), habrá MENOS falsos positivos pero también MENOS detecciones de transición real
+
+---
+
+### 4. Top FT Shooters (Ranking de Especialistas en Tiros Libres)
+
+#### Objetivo
+Identificar los 3 mejores tiradoresde tiros libres (FT%) del equipo rival, permitiendo decisiones sobre fouling/defensa agresiva.
+
+#### Algoritmo
+
+**Paso 1: Filtrar candidatos con mínimo de intentos**
+```typescript
+const MIN_FTA_PER_GAME = 1.5
+const MIN_TOTAL_ATTEMPTS = 10
+
+const candidates = allPlayers.filter(p => {
+  const ftStats = {
+    ftm: p.ft_made ?? 0,
+    fta: p.ft_att ?? 0,
+    games: p.games_played ?? 1
+  }
+  
+  const ftaPerGame = ftStats.fta / Math.max(ftStats.games, 1)
+  
+  // Solo jugadores con volumen mínimo
+  return ftStats.fta >= MIN_TOTAL_ATTEMPTS && ftaPerGame >= MIN_FTA_PER_GAME
+})
+```
+
+**Paso 2: Calcular FT% y rankear**
+```typescript
+const ftShooters = candidates
+  .map(p => ({
+    player: p,
+    ftPercent: ((p.ft_made ?? 0) / p.ft_att) * 100,
+    ftm: p.ft_made ?? 0,
+    fta: p.ft_att ?? 0
+  }))
+  .sort((a, b) => b.ftPercent - a.ftPercent)  // Descendente
+  .slice(0, 3)  // Top 3
+```
+
+**Paso 3: Mostrar tarjetas**
+```typescript
+{ftShooters.map((ft, i) => (
+  <div key={i} className="rounded-lg border bg-card p-3">
+    <div className="text-xs text-muted-foreground">
+      #{i + 1} Tirador FT
+    </div>
+    <div className="text-lg font-bold">
+      {ft.player.name}
+    </div>
+    <div className="text-2xl font-bold text-green-500">
+      {ft.ftPercent.toFixed(1)}%
+    </div>
+    <div className="text-xs text-muted-foreground">
+      {ft.ftm}/{ft.fta} intentos
+    </div>
+  </div>
+))}
+```
+
+#### Interpretación
+
+| FT% | Tipo de Tirador | Defensa |
+|---|---|---|
+| <60% | Pobre | Foulear agresivamente |
+| 60-70% | Normal | Defensa estándar |
+| 70-80% | Bueno | Evitar fouls si es posible |
+| >80% | Elite | Máxima cautela con fouls |
+
+#### Uso Táctico
+
+- **Si FT% > 75%**: No foulear cuando el marcador es cerrado
+- **Si FT% < 60%**: Considerar foulear en situaciones de presión
+- **Contra toda regla**: Si te quedan pocas faltas disponibles, foulea a los pobres tirador
+
+#### Limitaciones
+
+- No diferencia tiros libres técnicos vs. de juego
+- No ajusta por "High Leverage" (situaciones cercanas en el marcador)
+- Mínimo de intentos puede ser bajo para especialistas que juegan poco
+
+---
+
+### 5. Red de Sinergia (Assist Networks & Partner Impact)
+
+#### Objetivo
+Mapear las conexiones asistentes entre jugadores del rival, identificar duplas de mayor peligro, y evaluar el impacto combinado de parejas en el +/-.
+
+#### 5.1 Asistencias Dadas (Playmakers Peligrosos)
+
+**Cálculo**: Qué jugadores el rival asisten a más compañeros (buen manejo de balón)
+
+```typescript
+// En api.ts → getPlayerSynergyData()
+const assistsGiven = new Map<number, { player: Player; count: number }>()
+
+// Buscar eventos PBP donde player hace assist
+if (event.action_type === "assist" && event.player_id === targetPlayerId) {
+  const scorerId = findScorerInWindow(event, ±3)  // Buscar quién convirtió
+  if (scorerId) {
+    assistsGiven.set(scorerId, {
+      player: playerMap.get(scorerId),
+      count: (assistsGiven.get(scorerId)?.count ?? 0) + 1
+    })
+  }
+}
+```
+
+**Visualización**: Top 5 jugadores a quienes más ha asistido (barras horizontales verdes)
+
+**Interpretación**: Si el rival tiene 1-2 playmakers (25+ asistencias), focalizamos defensa en esos
+
+#### 5.2 Asistencias Recibidas (Scorers Dinámicos)
+
+**Cálculo**: Qué jugadores reciben más asistencias (beneficencia del equipo)
+
+```typescript
+// Buscar eventos PBP donde player anota
+if (event.action_type.includes("made") && event.player_id === targetPlayerId) {
+  const assisterId = findAssisterInWindow(event, ±3)  // Buscar quién asistió
+  if (assisterId) {
+    assistsReceived.set(assisterId, {
+      player: playerMap.get(assisterId),
+      count: (assistsReceived.get(assisterId)?.count ?? 0) + 1
+    })
+  }
+}
+```
+
+**Visualización**: Top 5 jugadores que más lo han asistido (barras horizontales azules)
+
+**Interpretación**: Si el rival recibe muchas asistencias, es un scorer integrado (difícil de defender aislado)
+
+#### 5.3 Parejas de Mayor Impacto (+/- Partners)
+
+**Cálculo**: Duplas con mayor +/- colectivo durante stints compartidos
+
+```typescript
+// En api.ts → getPlayerSynergyData()
+const partners = new Map<number, { player: Player; sharedPlusMinus: number }>()
+
+for (const stat1 of allStats) {
+  for (const stat2 of allStats) {
+    if (stat1.player_id >= stat2.player_id) continue  // Evitar duplicados
+    
+    // ¿Jugaron en el mismo partido? (juegan en el mismo game_id)
+    if (stat1.game_id === stat2.game_id) {
+      const sharedPM = (stat1.plus_minus ?? 0) + (stat2.plus_minus ?? 0)
+      
+      if (!partners.has(stat2.player_id) || 
+          partners.get(stat2.player_id)!.sharedPlusMinus < sharedPM) {
+        partners.set(stat2.player_id, {
+          player: (stat2 as any).player,
+          sharedPlusMinus: sharedPM
+        })
+      }
+    }
+  }
+}
+```
+
+**Visualización**: Top 5 parejas ordenadas por +/- combinado más alto
+
+**Interpretación**: Duplas con +/- alto = ácido para defender. Estrategia: separarlas, foulear selectivamente
+
+#### 5.4 Alineaciones Tácticas (Tactical Whiteboard)
+
+**Objetivo**: Mostrar las 3 alineaciones (quintetos) más usadas por el rival con sus estadísticas
+
+**Datos**: De `getTeamLineups(rivalTeamId)`
+
+```typescript
+// Backend retorna: [
+//   {
+//     lineupId: "1-5-7-9-11",
+//     players: [Player, Player, Player, Player, Player],
+//     minutes: 145,
+//     netRating: +8.5,
+//     stints: 5,
+//     pf: 130,  // Puntos a favor
+//     pc: 110   // Puntos contra
+//   },
+//   ...
+// ]
+```
+
+**Visualización**:
+- Tarjetas por cada alineación (top 3)
+- Nombres de jugadores + dorsal
+- Badge de minutos (145 min)
+- Badge de +/- neto (+8.5)
+- Badge de stints (5 periodos)
+- Badge de diferencial (PF 130 - PC 110 = +20)
+
+**Interpretación**: 
+- Alineación con +/- alto = setup ofensivo peligroso
+- Alineación con stints bajo = poco usado, sorpresa táctica
+- Alineación defensiva vs ofensiva: comparar PF/PC
+
+---
+
+### 6. Cálculos de Scouting Complementarios
+
+#### 6.1 PIR (Índice de Eficiencia del Jugador)
+
+En el dossier individual se muestra el PIR del jugador opponent:
+
+```typescript
+PIR = (PTS + REB + AST + ST + BLK) - (eFGA + TOVAT + TO) - (FG% - FTA)
+```
+
+Simplificado:
+```typescript
+const calcPIR = (stats: StatsPlayerGame) => {
+  const positive = (stats.points ?? 0) + (stats.reb_tot ?? 0) + 
+                   (stats.assists ?? 0) + (stats.steals ?? 0) + (stats.blocks_for ?? 0)
+  const negative = (stats.t2_att ?? 0 + stats.t3_att ?? 0 - stats.fgm ?? 0) + 
+                   (stats.turnovers ?? 0)
+  return positive - negative
+}
+```
+
+**Interpretación**:
+- PIR > 10: Desempeño excelente
+- PIR 0-10: Desempeño normal
+- PIR < 0: Desempeño bajo
+
+---
+
 ## Referencias
 
 - **Four Factors**: Dean Oliver, "Basketball on Paper" (2004)
@@ -1593,11 +2099,18 @@ type ShotFilter = "all" | "home" | "away"
 
 ---
 
-**Última actualización**: Febrero 19, 2026  
-**Versión**: 1.2  
-**Cambios recientes**: 
-- Implementación completa del pipeline de transformación de coordenadas de shots (plegado CSS → coordenadas BD)
-- Smart PBP-shot linking con prioridad geométrica (evita cross-linking de 2pt ↔ 3pt)
-- Clasificación multidimensional de zonas (zona PBP + geometría de línea de triple)
-- Documentación extendida de todo el pipeline de shots (Análisis de Tiro)
+**Última actualización**: Febrero 20, 2026  
+**Versión**: 1.3.2  
+**Cambios recientes**:
+- Nueva sección: Análisis de Scouting (Módulo Rival) con 6 subsecciones
+- eFG% por Zona: cálculo de eficiencia por ubicación en cancha
+- Detección de DNP: identificación de jugadores inactivos
+- Análisis de Transición (Transition Danger): % de puntos en transición rápida
+  - **BUG FIXES**: Corregido cálculo que solo contaba offTurnover (sin fastbreak)
+  - Ajustado fastbreak estimation: 8% → 3%
+  - Ventana de detección reducida: ±5 eventos → ±2 eventos (más restrictivo)
+  - Frontend ahora suma correctamente (offTurnover + fastbreak)
+- Top FT Shooters: ranking de especialistas en tiros libres
+- Red de Sinergia: asistencias, parejas de impacto, alineaciones tácticas
+- Cálculos complementarios: PIR análisis
 

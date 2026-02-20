@@ -132,7 +132,7 @@ export function WinProbabilityTab({ game, pbp, myTeamId }: WinProbabilityTabProp
 
     const finalHome = game.home_score ?? lastHome
     const finalAway = game.away_score ?? lastAway
-    points.push({ elapsed: TOTAL_MINUTES, homeScore: finalHome, awayScore: finalAway, diff: finalHome - finalAway })
+    // points.push({ elapsed: TOTAL_MINUTES, homeScore: finalHome, awayScore: finalAway, diff: finalHome - finalAway })
 
     return points
   }, [pbp, game])

@@ -228,6 +228,127 @@ export async function getHeadToHead(
   return data ?? []
 }
 
+/** Top assist duos from a team's PBP data (assister → scorer pairs). */
+export async function getTeamAssistPairs(
+  teamId: number,
+): Promise<{ assister: Player; scorer: Player; count: number }[]> {
+  const { data: games } = await supabase
+    .from("games")
+    .select("id")
+    .or(`home_team_id.eq.${teamId},away_team_id.eq.${teamId}`)
+    .eq("status", "PROCESSED")
+  if (!games || games.length === 0) return []
+
+  const gameIds = games.map((g) => g.id)
+
+  // Fetch PBP in batches to avoid row limit
+  let allPbp: { id: number; game_id: number; action_type: string; player_id: number | null }[] = []
+  const batchSize = 5
+  for (let i = 0; i < gameIds.length; i += batchSize) {
+    const { data } = await supabase
+      .from("play_by_play")
+      .select("id, game_id, action_type, player_id")
+      .in("game_id", gameIds.slice(i, i + batchSize))
+      .eq("team_id", teamId)
+      .order("id", { ascending: true })
+    allPbp = allPbp.concat((data ?? []) as typeof allPbp)
+  }
+
+  // Group by game
+  const byGame = new Map<number, typeof allPbp>()
+  for (const ev of allPbp) {
+    if (!byGame.has(ev.game_id)) byGame.set(ev.game_id, [])
+    byGame.get(ev.game_id)!.push(ev)
+  }
+
+  const pairCounts = new Map<string, { aidId: number; scorerId: number; count: number }>()
+  for (const [, events] of byGame) {
+    for (let i = 0; i < events.length; i++) {
+      const ev = events[i]
+      if (ev.action_type !== "assist" || !ev.player_id) continue
+      // Search forward up to 6 events for the basket
+      for (let j = i + 1; j < Math.min(i + 6, events.length); j++) {
+        const next = events[j]
+        if (
+          next.action_type?.includes("made") &&
+          !next.action_type.includes("ft_") &&
+          next.player_id &&
+          next.player_id !== ev.player_id
+        ) {
+          const key = `${ev.player_id}→${next.player_id}`
+          const cur = pairCounts.get(key) ?? { aidId: ev.player_id, scorerId: next.player_id, count: 0 }
+          cur.count++
+          pairCounts.set(key, cur)
+          break
+        }
+        if (next.action_type?.includes("missed") || next.action_type?.includes("turnover")) break
+      }
+    }
+  }
+
+  const sorted = Array.from(pairCounts.values()).sort((a, b) => b.count - a.count).slice(0, 10)
+  if (sorted.length === 0) return []
+
+  const playerIds = [...new Set(sorted.flatMap((p) => [p.aidId, p.scorerId]))]
+  const { data: players } = await supabase.from("players").select("*").in("id", playerIds)
+  const pm = new Map<number, Player>((players ?? []).map((p: Player) => [p.id, p]))
+
+  return sorted
+    .filter((p) => pm.has(p.aidId) && pm.has(p.scorerId))
+    .map((p) => ({ assister: pm.get(p.aidId)!, scorer: pm.get(p.scorerId)!, count: p.count }))
+}
+
+/** Best shared +/- pairs for a team (players who are best together).
+ *  Approximates shared +/- as (pmA + pmB) / 2 per game, averaged across games they played together.
+ */
+export async function getTeamBestPlusMinus(
+  teamId: number,
+): Promise<{ playerA: Player; playerB: Player; avgSharedPM: number; games: number }[]> {
+  const stats = await getPlayerSeasonStats(teamId)
+  const byGame = new Map<number, StatsPlayerGame[]>()
+  for (const s of stats) {
+    if (!byGame.has(s.game_id)) byGame.set(s.game_id, [])
+    byGame.get(s.game_id)!.push(s)
+  }
+
+  const pairPM = new Map<string, { idA: number; idB: number; total: number; games: number }>()
+  for (const [, gameStats] of byGame) {
+    for (let i = 0; i < gameStats.length; i++) {
+      for (let j = i + 1; j < gameStats.length; j++) {
+        const a = gameStats[i]
+        const b = gameStats[j]
+        const shared = ((a.plus_minus ?? 0) + (b.plus_minus ?? 0)) / 2
+        const [idA, idB] = a.player_id < b.player_id ? [a.player_id, b.player_id] : [b.player_id, a.player_id]
+        const key = `${idA}-${idB}`
+        const cur = pairPM.get(key) ?? { idA, idB, total: 0, games: 0 }
+        cur.total += shared
+        cur.games++
+        pairPM.set(key, cur)
+      }
+    }
+  }
+
+  const sorted = Array.from(pairPM.values())
+    .filter((p) => p.games >= 3)
+    .map((p) => ({ ...p, avg: p.total / p.games }))
+    .sort((a, b) => b.avg - a.avg)
+    .slice(0, 10)
+  if (sorted.length === 0) return []
+
+  const playerIds = [...new Set(sorted.flatMap((p) => [p.idA, p.idB]))]
+  const { data: players } = await supabase.from("players").select("*").in("id", playerIds)
+  const pm = new Map<number, Player>((players ?? []).map((p: Player) => [p.id, p]))
+
+  return sorted
+    .filter((p) => pm.has(p.idA) && pm.has(p.idB))
+    .map((p) => ({
+      playerA: pm.get(p.idA)!,
+      playerB: pm.get(p.idB)!,
+      avgSharedPM: Number(p.avg.toFixed(1)),
+      games: p.games,
+    }))
+}
+
 // ══════════════════════════════════════════════════════════════
 // HELPERS
 // ══════════════════════════════════════════════════════════════
@@ -840,6 +961,7 @@ export async function getTeamScoringBreakdown(teamId: number) {
 
   let offTurnover = 0
   let secondChance = 0
+  let fastbreak = 0
   let totalPoints = 0
 
   // Simple heuristic: Look at sequences 
@@ -848,12 +970,17 @@ export async function getTeamScoringBreakdown(teamId: number) {
     if (ev.action_value && ev.action_value > 0 && ev.action_type?.includes("made")) {
       totalPoints += ev.action_value
 
-      // Check if preceded by steal/turnover (within 3 events)
+      // Check if preceded by steal/turnover/reb_off (within 2 events - more restrictive)
+      // Window: i-2 to i-1 (immediate predecessor only, plus one extra event)
       let foundTurnover = false
       let foundOffReb = false
-      for (let j = Math.max(0, i - 5); j < i; j++) {
-        if (pbp[j].action_type === "steal" || pbp[j].action_type === "turnover") {
+      let foundSteal = false
+      for (let j = Math.max(0, i - 2); j < i; j++) {
+        if (pbp[j].action_type === "turnover") {
           foundTurnover = true
+        }
+        if (pbp[j].action_type === "steal") {
+          foundSteal = true
         }
         if (pbp[j].action_type === "reb_off") {
           foundOffReb = true
@@ -861,11 +988,12 @@ export async function getTeamScoringBreakdown(teamId: number) {
       }
 
       if (foundOffReb) secondChance += ev.action_value
-      else if (foundTurnover) offTurnover += ev.action_value
+      else if (foundTurnover || foundSteal) offTurnover += ev.action_value
     }
   }
 
-  const fastbreak = Math.round(totalPoints * 0.08) // estimated
+  // Fastbreak: 3% of total points (conservative estimate since we don't have real possession time data)
+  fastbreak = Math.round(totalPoints * 0.03)
   const regular = totalPoints - offTurnover - secondChance - fastbreak
 
   return { offTurnover, fastbreak, secondChance, regular }
@@ -1514,6 +1642,27 @@ export async function getSinglePlayerOnOff(
     totalOnPM,
     totalOffPM,
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// SCOUTING — NEXT GAME DETECTION
+// ══════════════════════════════════════════════════════════════
+
+/** Returns the very next scheduled game for a team (date >= now). */
+export async function getNextGame(teamId: number): Promise<Game | null> {
+  const today = new Date().toISOString()
+  const { data } = await supabase
+    .from("games")
+    .select(
+      "*, home_team:teams!games_home_team_id_fkey(*), away_team:teams!games_away_team_id_fkey(*)",
+    )
+    .or(`home_team_id.eq.${teamId},away_team_id.eq.${teamId}`)
+    .eq("status", "SCHEDULED")
+    .gte("date", today)
+    .order("date", { ascending: true })
+    .limit(1)
+    .maybeSingle()
+  return data
 }
 
 /** Top jugadores por EFF (valoración) */
